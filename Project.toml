@@ -1,0 +1,13 @@
+name = "PathTwister"
+uuid = "fc4e3024-5928-44cf-a69f-527d9928445b"
+authors = ["Joshua J Bon"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
