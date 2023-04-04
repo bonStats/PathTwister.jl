@@ -13,3 +13,5 @@ function (chain::AbstractMarkovChain)(new::AbstractParticle, rng, p::Int64, old:
     # warning changes! new::AbstractParticle
     new.x = rand(rng, (p == 1) ? chain[p] : chain[p](old))
 end
+
+abstract type LogPotentials <:Function end
