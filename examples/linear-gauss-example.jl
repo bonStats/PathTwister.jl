@@ -68,48 +68,6 @@ smcio = SMCIO{model.particle, model.pScratch}(2^10, 10, 1, true)
 smc!(model, smcio)
 
 
-# reps = 5
-# # p = n
-# p = 10
-# padparticles = [[model.particle() for i in 1:length(particles)] for t in 2:reps]
-# pushfirst!(padparticles, smcio.allZetas[10])
-# for t in 2:reps
-#     M!.(padparticles[t], [Random.GLOBAL_RNG], [p], smcio.allZetas[9], [nothing]) #rng
-# end
-# X_single, ids = buildpredictors(padparticles[1])
-
-# responsey = vcat([buildresponse(padparticles[i], M!, ℓG, p) for i in 1:reps]...)
-# predictorsX = vcat(X_single, [buildpredictors(padparticles[i], nothing) for i in 2:reps]...)
-# foldid = vcat([i*ones(Int64, size(X_single,1)) for i in 1:reps]...)
-# res = learntwistlassocv(predictorsX, responsey, ids, foldid, zeros(d))
-
-
-# function ExpQuadTwist(pathcv::GLMNetCrossValidation, parids::Dict{Symbol, UnitRange{Int64}}, zeroquadϵ::Float64 = 1e-4)
-#     h, J = pathcv_hJ(pathcv, parids)
-#     # correct any quadratic components = 0 if zeroquadϵ ≢ 0
-#     if !iszero(zeroquadϵ)
-#         J[diagind(J)] = map(x -> iszero(x) ? abs(zeroquadϵ) : x, J[diagind(J)])
-#     end
-#     return ExpQuadTwist(h, J)
-# end
-
-# ψ = ExpQuadTwist(res, ids)
-# MvNormalCanon(ψ.h, ψ.J)
-
-# # p < n
-# p = 9
-# particles = smcio.allZetas[9]
-# X_single, ids = buildpredictors(particles)
-
-# responsey = vcat([buildresponse(particles, M!, ℓG, p, ψ) for i in 1:reps]...)
-# predictorsX = repeat(X_single, reps) # more space efficient version?
-# foldid = vcat([i*ones(Int64, size(X_single,1)) for i in 1:reps]...)
-# res = learntwistlassocv(predictorsX, responsey, ids, foldid, zeros(d))
-
-# ψ2 = ExpQuadTwist(res, ids)
-# MvNormalCanon(ψ2.h, ψ2.J)
-
-
 bestψ = [ExpQuadTwist{Float64}(d) for _ in 1:model.maxn]
 
 lassocvtwist!(bestψ, smcio, model, 4, cvstrategy = 8)
