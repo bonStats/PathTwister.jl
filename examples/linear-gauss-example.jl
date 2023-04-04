@@ -27,27 +27,38 @@ end
 (M::LinearGaussMarkovKernel{R})(x::AbstractVector{R}) where {R<:Real} = M(Random.GLOBAL_RNG, x)
 
 
-struct ExpQuadTwist{R<:Real} <: AbstractTwist
+mutable struct ExpQuadTwist{R<:Real} <: AbstractTwist
     h::AbstractVector{R}
     J::AbstractMatrix{R}
+    # ExpQuadTwist{R}() where {R<:Real} = new()
+    # ExpQuadTwist(h::AbstractVector{R}, J::AbstractMatrix{R}) where {R<:Real} = new{R}(h,J)
 end
 
-function (ψ::ExpQuadTwist{R})(x::AbstractVector{R}, logscale::Bool = true) where {R<:Real}
+ExpQuadTwist{R}(d::Int64) where {R<:Real} = ExpQuadTwist(zeros(R,d),zeros(R,d,d))
+
+function evolve!(ψ::ExpQuadTwist{R}, h::AbstractVector{R}, J::AbstractMatrix{R}) where {R<:Real}
+    ψ.h = ψ.h + h
+    ψ.J = ψ.J + J
+end
+
+function (ψ::ExpQuadTwist{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
     d = MvNormalCanon(m.h, m.J)
     ℓpdf = logpdf(d, x) - logpdf(d, mode(d)) # maximum: log(1) = 0
-    if logscale
+    if outscale == :log
         return ℓpdf
     else
+        @warn "Returning on standard scale, logscale = $ℓpdf"
         exp(ℓpdf)
     end
 end
 
-function (ψ::ExpQuadTwist{R})(particles::Vector{<:P}, logscale::Bool = true) where {R<:Real, P<:AbstractParticle}
-    d = MvNormalCanon(m.h, m.J)
+function (ψ::ExpQuadTwist{R})(particles::Vector{<:P}, outscale::Symbol) where {R<:Real, P<:AbstractParticle}
+    d = MvNormalCanon(ψ.h, ψ.J)
     ℓpdf = logpdf(d, value(particles)) .- logpdf(d, mode(d)) # maximum: log(1) = 0
-    if logscale
+    if outscale == :log
         return ℓpdf
     else
+        @warn "Returning on standard scale, e.g. logscale[1] = $ℓpdf"
         exp.(ℓpdf)
     end
 end
@@ -99,21 +110,19 @@ smcio = SMCIO{model.particle, model.pScratch}(2^10, 10, 1, true)
 
 smc!(model, smcio)
 
-particles = smcio.allZetas[10]
-
 using GLMNet
 
-function buildresponse(particles::Vector{<:P}, M!::Function, ℓG::Function, p::Int64, ψ::Union{AbstractTwist, Nothing} = nothing, rng = Random.GLOBAL_RNG) where {P<:AbstractParticle}
+function buildresponse(particles::Vector{<:P}, M!::Function, ℓG::Function, p::Int64, ψ::Union{T, Nothing} = nothing, rng = Random.GLOBAL_RNG) where {P<:AbstractParticle,T<:AbstractTwist}
     ℓresp = ℓG.([p], particles, nothing) #ℓGp
     if !isnothing(ψ) # when p == n
-        newparticles = typeof(particles)(undef, length(particles))
+        newparticles = [model.particle() for i in 1:length(particles)]
         M!.(newparticles, [rng], [p+1], particles, [nothing])
-        ℓresp += ψ.(newparticles)
+        ℓresp += ψ(newparticles, :log)
     end
     return ℓresp
 end
 
-function buildpredictors(particles::Vector{<:P}, ids::Bool = true) where {P<:AbstractParticle}
+function buildpredictors(particles::Vector{<:P}) where {P<:AbstractParticle}
     d = length(value(particles[1])) # original predictors
     r = 2*d+binomial(d,2) # regression size (ignore intercept)
     X = ones(length(particles),r)
@@ -135,8 +144,17 @@ function buildpredictors(particles::Vector{<:P}, ::Nothing) where {P<:AbstractPa
     return X
 end
 
+function learntwistlassocv(X::AbstractMatrix{R}, y::AbstractVector{R}, parids::Dict{Symbol, UnitRange{Int64}}, folds::Union{AbstractVector{Int64}, Int64}, quadupper::AbstractVector{R}) where {R<:Real}
+    quadconstraint = repeat([-Inf; Inf], 1, size(X, 2))
+    quadconstraint[:,parids[:quad]] .= [repeat([-Inf], length(parids[:quad])) quadupper]'
+    if isa(folds, AbstractVector)
+        return glmnetcv(X, y, folds = folds, constraints = quadconstraint)
+    else isa(folds, Integer)
+        return glmnetcv(X, y, nfolds = folds, constraints = quadconstraint)
+    end
+end
 
-reps = 10
+reps = 5
 # p = n
 p = 10
 padparticles = [[model.particle() for i in 1:length(particles)] for t in 2:reps]
@@ -149,29 +167,46 @@ X_single, ids = buildpredictors(padparticles[1])
 responsey = vcat([buildresponse(padparticles[i], M!, ℓG, p) for i in 1:reps]...)
 predictorsX = vcat(X_single, [buildpredictors(padparticles[i], nothing) for i in 2:reps]...)
 foldid = vcat([i*ones(Int64, size(X_single,1)) for i in 1:reps]...)
-quadconstraints = repeat([-Inf; Inf], 1, size(X_single, 2))
-quadconstraints[:,ids[:quad]] .= repeat([-Inf; 0.0], 1, length(ids[:quad]))
-res = glmnetcv(predictorsX, responsey, folds = foldid, constraints = quadconstraints)
-cvcoefres = coef(res)
+res = learntwistlassocv(predictorsX, responsey, ids, foldid, zeros(d))
 
-cvcoefres[ids[:quad]]
-cvcoefres[ids[:linear]]
-cvcoefres[ids[:cross]]
 
-# Regression to MvNormalCanon form
+# Lasso Regression -> MvNormalCanon form
 # ignoring constants...
 # ∑aᵢᵢxᵢ² + ∑aᵢⱼxᵢxⱼ1(i<j) + ∑bᵢxᵢ = -0.5(x-μ)ᵀP(x-μ) = -0.5xᵀPx + xᵀPμ = -0.5xᵀJx + xᵀh
+# e.g. in two dimensions:
 # |x₁|ᵀ * |a b| * |x₁|   | ax₁ + bx₂|ᵀ |x₁|   
 # |x₂|    |b c|   |x₂| = | bx₁ + cx₂|  |x₂| = ax₁² + 2bx₁x₂ + cx₂²
+function pathcv_hJ(pathcv::GLMNetCrossValidation, parids::Dict{Symbol, UnitRange{Int64}})
+    β = coef(pathcv)
+    
+    h = β[parids[:linear]]
+    
+    d = length(parids[:linear])
+    J = zeros(d,d)
+    J[diagind(J)] = -2 .* β[parids[:quad]]
+    for (i, cc) in uppertriiter(d)
+        J[cc] = J[reverse(cc)] = -β[parids[:cross][i]]
+    end
 
-J = zeros(2,2)
-J[diagind(J)] = -2 .* cvcoefres[ids[:quad]]
-for (i, cc) in uppertriiter(d)
-    J[cc] = J[reverse(cc)] = -cvcoefres[ids[:cross][i]]
+    #h, J: MvNormalCanon
+    h, J
 end
-eq = ExpQuadTwist(cvcoefres[ids[:linear]], J)
 
-MvNormalCanon(eq.h, eq.J)
+# maximum adjustment for ψ in terms of constraints
+# on quadratic diagonal terms from lassocv
+maxlassoadjust(ψ::ExpQuadTwist{R}, ϵ::Float64) where {R<:Real} = 0.5*diag(ψ.J) .- ϵ
+
+# function ExpQuadTwist(pathcv::GLMNetCrossValidation, parids::Dict{Symbol, UnitRange{Int64}}, zeroquadϵ::Float64 = 1e-4)
+#     h, J = pathcv_hJ(pathcv, parids)
+#     # correct any quadratic components = 0 if zeroquadϵ ≢ 0
+#     if !iszero(zeroquadϵ)
+#         J[diagind(J)] = map(x -> iszero(x) ? abs(zeroquadϵ) : x, J[diagind(J)])
+#     end
+#     return ExpQuadTwist(h, J)
+# end
+
+ψ = ExpQuadTwist(res, ids)
+MvNormalCanon(ψ.h, ψ.J)
 
 # p < n
 p = 9
@@ -181,7 +216,61 @@ X_single, ids = buildpredictors(particles)
 responsey = vcat([buildresponse(particles, M!, ℓG, p, ψ) for i in 1:reps]...)
 predictorsX = repeat(X_single, reps) # more space efficient version?
 foldid = vcat([i*ones(Int64, size(X_single,1)) for i in 1:reps]...)
-quadconstraints = repeat([-Inf; Inf], 1, size(X_single, 2))
-quadconstraints[:,ids[:quad]] .= repeat([-Inf; 0.0], 1, length(ids[:quad]))
-res = glmnetcv(predictorsX, responsey, folds = foldid, constraints = quadconstraints)
-cvcoefres = coef(res)
+res = learntwistlassocv(predictorsX, responsey, ids, foldid, zeros(d))
+
+ψ2 = ExpQuadTwist(res, ids)
+MvNormalCanon(ψ2.h, ψ2.J)
+
+function lassocvtwist!(ψ::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64, cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
+    # TD: how to check if smcio has been run?
+    # TD: Need scratch for extra particles
+    if !smcio.fullOutput
+        @error "smcio must have full particle trajectory"
+    end
+
+    # setup cv strategy
+    if (MCreps > 1) & (cvstrategy == :byreps)
+        # folds = id vector which fold an observation belongs to
+        folds = vcat([i*ones(Int64, smcio.N) for i in 1:MCreps]...)
+    elseif (MCreps > 0) & isa(cvstrategy, Integer)
+        # nfolds = how many folds to use
+        folds = cvstrategy
+    else
+        @error "Incompatible MCreps and CV strategy"
+    end
+
+    for p in model.maxn:-1:1
+        # single design matrix
+        X_single, parids = buildpredictors(smcio.allZetas[p])
+
+        if p == model.maxn
+            # extra particles for same number of observations over p
+            if MCreps > 1
+                padparticles = [[model.particle() for _ in 1:smcio.N] for _ in 2:MCreps]
+                pushfirst!(padparticles, smcio.allZetas[model.maxn])
+                for t in 2:MCreps
+                    model.M!.(padparticles[t], [Random.GLOBAL_RNG], [model.maxn], smcio.allZetas[model.maxn-1], [nothing]) #rng
+                end
+            else 
+                padparticles = smcio.allZetas[model.maxn]
+            end
+
+            y = vcat([buildresponse(padparticles[i], model.M!, model.lG, model.maxn) for i in 1:MCreps]...)
+            X = vcat(X_single, [buildpredictors(padparticles[i], nothing) for i in 2:MCreps]...)
+            
+        else # p < model.maxn
+            y = vcat([buildresponse(smcio.allZetas[p], model.M!, model.lG, p, ψ[p+1]) for i in 1:MCreps]...)
+            X = repeat(X_single, MCreps) # space efficient version?
+        end
+
+        h, J = pathcv_hJ(learntwistlassocv(X, y, parids, folds, maxlassoadjust(ψ[p], abs(quadϵ))), parids)
+
+        evolve!(ψ[p], h, J)
+
+    end
+end
+
+
+bestψ = [ExpQuadTwist{Float64}(d) for _ in 1:model.maxn]
+
+lassocvtwist!(bestψ, smcio, model, 5)
