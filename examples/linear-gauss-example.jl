@@ -41,6 +41,8 @@ function evolve!(ψ::ExpQuadTwist{R}, h::AbstractVector{R}, J::AbstractMatrix{R}
     ψ.J = ψ.J + J
 end
 
+Base.iszero(ψ::ExpQuadTwist{R}) where {R<:Real} = det(ψ.J) <= 0.0
+
 function (ψ::ExpQuadTwist{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
     d = MvNormalCanon(m.h, m.J)
     ℓpdf = logpdf(d, x) - logpdf(d, mode(d)) # maximum: log(1) = 0
@@ -221,9 +223,9 @@ res = learntwistlassocv(predictorsX, responsey, ids, foldid, zeros(d))
 ψ2 = ExpQuadTwist(res, ids)
 MvNormalCanon(ψ2.h, ψ2.J)
 
-function lassocvtwist!(ψ::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64, cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
-    # TD: how to check if smcio has been run?
-    # TD: Need scratch for extra particles
+function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
+    # TD: how to check if smc!(smcio, model) has been run?
+    # TD: Investigate if need scratch for extra particles
     if !smcio.fullOutput
         @error "smcio must have full particle trajectory"
     end
@@ -252,20 +254,30 @@ function lassocvtwist!(ψ::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::S
                     model.M!.(padparticles[t], [Random.GLOBAL_RNG], [model.maxn], smcio.allZetas[model.maxn-1], [nothing]) #rng
                 end
             else 
-                padparticles = smcio.allZetas[model.maxn]
+                padparticles = [smcio.allZetas[model.maxn]] # always a vector (of Vector{Particle})
             end
 
             y = vcat([buildresponse(padparticles[i], model.M!, model.lG, model.maxn) for i in 1:MCreps]...)
             X = vcat(X_single, [buildpredictors(padparticles[i], nothing) for i in 2:MCreps]...)
             
+            # adjust regression for current ψ
+            if !iszero(ψs[model.maxn])
+                y .-= vcat([ψs[model.maxn](padparticles[i], :log) for i in 1:MCreps]...)
+            end
+
         else # p < model.maxn
-            y = vcat([buildresponse(smcio.allZetas[p], model.M!, model.lG, p, ψ[p+1]) for i in 1:MCreps]...)
+            y = vcat([buildresponse(smcio.allZetas[p], model.M!, model.lG, p, ψs[p+1]) for i in 1:MCreps]...) # automatically adjusts for old+new ψ by updating ψs below
             X = repeat(X_single, MCreps) # space efficient version?
+
+            # adjust regression for current ψ
+            if !iszero(ψs[p])
+                y .-= repeat(ψs[p](smcio.allZetas[p], :log), MCreps)
+            end
         end
 
-        h, J = pathcv_hJ(learntwistlassocv(X, y, parids, folds, maxlassoadjust(ψ[p], abs(quadϵ))), parids)
+        h, J = pathcv_hJ(learntwistlassocv(X, y, parids, folds, maxlassoadjust(ψs[p], abs(quadϵ))), parids)
 
-        evolve!(ψ[p], h, J)
+        evolve!(ψs[p], h, J)
 
     end
 end
@@ -273,4 +285,7 @@ end
 
 bestψ = [ExpQuadTwist{Float64}(d) for _ in 1:model.maxn]
 
-lassocvtwist!(bestψ, smcio, model, 5)
+lassocvtwist!(bestψ, smcio, model, 10, cvstrategy = 8)
+
+bestψ[1].J
+bestψ1[1].J
