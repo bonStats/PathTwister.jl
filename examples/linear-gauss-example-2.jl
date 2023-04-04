@@ -10,16 +10,13 @@ mutable struct VectorParticle{d} <: AbstractParticle
     VectorParticle{d}() where d = new()
 end
 
-struct LinearGaussMarkovKernel{R<:Real} <: ParameterizedDistribution
+struct LinearGaussMarkovKernel{R<:Real} <: MarkovKernel
     A::AbstractMatrix{R}
     b::Vector{R}
     Σ::AbstractMatrix{R}
 end
 
-function (M::LinearGaussMarkovKernel{R})(x::AbstractVector{R}) where {R<:Real}
-    μ = M.A * x + M.b
-    return MvNormal(μ, M.Σ)
-end
+(M::LinearGaussMarkovKernel{R})(x::AbstractVector{R}) where {R<:Real} = MvNormal(M.A * x + M.b, M.Σ)
 
 n = 10
 d = 2
@@ -47,6 +44,7 @@ for p in 2:n
     y[p] = latentx[p] + rand(noise)
 end
 
+# generalise this...
 function ℓG(p::Int64, particle::AbstractParticle, ::Nothing)
     return logpdf(MvNormal(y[p], 1.0*I), value(particle))
 end

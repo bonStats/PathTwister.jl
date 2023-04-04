@@ -8,7 +8,7 @@ import Distributions: MvNormalCanon, mode, logpdf
 import LinearAlgebra: det, diag, diagind
 
 include("abstract.jl")
-export AbstractParticle, AbstractTwist, ParameterizedDistribution, value, AbstractMarkovChain
+export AbstractParticle, AbstractTwist, MarkovKernel, value, AbstractMarkovChain
 
 include("markov-chain.jl")
 export MarkovChain, HomogeneousMarkovChain

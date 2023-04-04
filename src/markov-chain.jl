@@ -1,5 +1,5 @@
 
-struct MarkovChain{D,K} <: AbstractMarkovChain # e.g. D = Distribution, K = ParameterizedDistribution
+struct MarkovChain{D,K} <: AbstractMarkovChain # e.g. D = Distribution, K = MarkovKernel
     μ::D
     M::Vector{K}
 end
@@ -11,7 +11,7 @@ function Base.getindex(chain::MarkovChain{D,K}, i::Integer) where {D,K}
    i == 1 ? chain.μ : chain.M[i-1]
 end
 
-struct HomogeneousMarkovChain{D,K} <: AbstractMarkovChain # e.g. D = Distribution, K = ParameterizedDistribution
+struct HomogeneousMarkovChain{D,K} <: AbstractMarkovChain # e.g. D = Distribution, K = MarkovKernel
     μ::D
     M::K
     n::Int64
