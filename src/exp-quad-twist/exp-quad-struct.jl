@@ -1,3 +1,5 @@
+import Distributions: MvNormalCanon, mode, logpdf
+
 mutable struct ExpQuadTwist{R<:Real} <: AbstractTwist
     h::AbstractVector{R}
     J::AbstractMatrix{R}
