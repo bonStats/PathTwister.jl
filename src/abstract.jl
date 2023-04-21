@@ -11,7 +11,9 @@ abstract type MarkovKernel end
 abstract type AbstractMarkovChain <:Function end
 function (chain::AbstractMarkovChain)(new::AbstractParticle, rng, p::Int64, old::AbstractParticle, ::Nothing)
     # warning changes! new::AbstractParticle
-    new.x = rand(rng, (p == 1) ? chain[p] : chain[p](old))
+    d = (p == 1) ? chain[1] : chain[p](old)
+    new.x = rand(rng, isa(d, Sampleable) ? d : d())
+    # rand!(rng, isa(d, Sampleable) ? d : d(), new.x) # use this instead?
 end
 
 abstract type LogPotentials <:Function end

@@ -1,4 +1,4 @@
-import Distributions: VariateForm, ValueSupport, Univariate, Multivariate, Continuous, Sampleable
+import Distributions: VariateForm, ValueSupport, Univariate, Multivariate, Continuous, rand, rand!, _rand!
 
 function samplebyrejection!(rng::AbstractRNG, s::Sampleable, ψ::AbstractTwist, β::Float64,  maxiter::Int64, x::Union{AbstractVector{R}, DenseMatrix{R}}) where {R<:Real}
     # Assumptions: 

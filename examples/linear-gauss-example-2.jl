@@ -4,6 +4,10 @@ using LinearAlgebra
 using StaticArrays
 using Random
 using PathTwister
+using Roots
+import StatsFuns: logsumexp
+
+const MAXITER = 10^5
 
 # Particle Structure #
 mutable struct VectorParticle{d} <: AbstractParticle
@@ -75,3 +79,60 @@ lassocvtwist!(bestψ, smcio, model, 4, cvstrategy = 8)
 
 bestψ[1].J
 
+# locally twisted SMC
+
+
+# # Particle Structure #
+# mutable struct TTVectorParticle{d} <: AbstractParticle # TT = Tempered Twist by β
+#     x::SVector{d, Float64}
+#     β::Float64
+#     VectorParticle{d}() where d = new()
+# end
+# ##
+
+# Twisted Distribution
+
+ℓα = log(0.05)
+Nα = 5
+
+μψ = AdaptiveRejection(μ, bestψ[1], ℓα, Nα, MAXITER)
+
+
+# Twisted Markov Kernel
+struct TwistedLinearGaussMarkovKernel{R<:Real} <: MarkovKernel
+    M::LinearGaussMarkovKernel{R}
+    ψ::AbstractTwist
+    logα::Float64 # acceptance target
+    Nₐ::Int64 # sample to estimate acceptance rate
+end
+
+# vectorised constructor
+TwistedLinearGaussMarkovKernel(
+    M::LinearGaussMarkovKernel{R}, 
+    ψ::AbstractVector{T}, 
+    logα::Float64,  Nₐ::Int64) where {R<:Real,T<:AbstractTwist} = TwistedLinearGaussMarkovKernel.([M], ψ, [logα], [Nₐ])
+
+function (M::TwistedLinearGaussMarkovKernel{R})(x::AbstractVector{R}) where {R<:Real} 
+    # choose β from trial draws
+    d = MvNormal(M.A * x + M.b, M.Σ)
+    logψx = M.ψ.(rand(d, M.Nₐ), :log)
+
+    # define reach_acc_rate(b) > 0 if accept target is exceeded
+    reach_acc_rate(b::Float64) = logsumexp(b .* logψx) - log(M.Nₐ) - M.logα
+    if reach_acc_rate(1.0) > 0
+        β = 1.0
+    else
+        β = find_zero(reach_acc_rate, (0,1))
+    end
+
+    return RejectionSampler(d, M.ψ, β, MAXITER)
+
+end
+
+Mψ = TwistedLinearGaussMarkovKernel(M, bestψ[2:end], ℓα, Nα)
+
+chainψ = MarkovChain(μψ, Mψ)
+
+
+
+μψ()
