@@ -6,9 +6,9 @@ struct AdaptiveRejection{S<:Sampleable,T<:AbstractTwist}
     MAXITER::Int64
 end
 
-function (tw::AdaptiveRejection)()
+function (tw::AdaptiveRejection)(rng)
     # choose β from trial draws
-    logψ = tw.ψ.(rand(tw.d, tw.Nₐ), :log)
+    logψ = tw.ψ(rand(rng, tw.d, tw.Nₐ), :log)
 
     # define reach_acc_rate(b) > 0 if accept target is exceeded
     reach_acc_rate(b::Float64) = logsumexp(b .* logψ) - log(tw.Nₐ) - tw.logα

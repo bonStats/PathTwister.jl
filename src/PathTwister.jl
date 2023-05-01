@@ -6,6 +6,8 @@ using GLMNet
 import Random: GLOBAL_RNG, AbstractRNG
 import Distributions: Sampleable
 import LinearAlgebra: det, diag, diagind
+import StatsFuns: logsumexp
+import Roots: find_zero
 
 include("abstract.jl")
 export AbstractParticle, AbstractTwist, MarkovKernel, AbstractMarkovChain, LogPotentials

@@ -7,8 +7,9 @@ function samplebyrejection!(rng::AbstractRNG, s::Sampleable, ψ::AbstractTwist, 
     # 0 ≤ β ≤ 1
 
     for _ in 1:maxiter
-        x = rand(rng, s)
-        if β * ψ(x) > log(rand(rng))
+        # x = rand(rng, s)
+        rand!(rng, s, x) # doesn't work for static vector?
+        if β * ψ(x, :log) > log(rand(rng))
             return true # success
         end
     end
@@ -41,6 +42,7 @@ Base.length(s::RejectionSampler{Multivariate, S, T}) where {S<:ValueSupport, T<:
 function _rand!(rng::AbstractRNG, s::RejectionSampler{Multivariate, S, T}, x::AbstractVector{R}) where {S<:ValueSupport, T<:AbstractTwist, R<:Real}
     success = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
     @assert success "Rejection sample failed to accept after $(s.maxiter) iterations."
+    return x # to work with default Distributions.rand
 end
 
 # rand/size multivariate-matrix case:
@@ -49,5 +51,6 @@ Base.size(s::RejectionSampler{Multivariate, S, T}) where {S<:ValueSupport, T<:Ab
 function _rand!(rng::AbstractRNG, s::RejectionSampler{Multivariate, S, T}, x::DenseMatrix{R}) where {S<:ValueSupport, T<:AbstractTwist, R<:Real}
     success = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
     @assert success "Rejection sample failed to accept after $(s.maxiter) iterations."
+    return x # to work with default Distributions.rand
 end
 

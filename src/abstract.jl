@@ -7,8 +7,11 @@ value(particles::Vector{P}) where {P<:AbstractParticle} = reduce(hcat, value.(pa
 
 abstract type MarkovKernel end
 (M::MarkovKernel)(x::AbstractParticle) = M(value(x))
+(M::MarkovKernel)(rng, x::AbstractParticle) = M(rng, value(x))
 
 abstract type AbstractMarkovChain <:Function end
+
+# default method:
 function (chain::AbstractMarkovChain)(new::AbstractParticle, rng, p::Int64, old::AbstractParticle, ::Nothing)
     # warning changes! new::AbstractParticle
     d = (p == 1) ? chain[1] : chain[p](old)
