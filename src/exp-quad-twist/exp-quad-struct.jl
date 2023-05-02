@@ -45,4 +45,4 @@ function (ψ::ExpQuadTwist{R})(particles::Vector{<:P}, outscale::Symbol) where {
         @warn "Returning on standard scale, e.g. logscale[1] = $ℓpdf"
         exp.(ℓpdf)
     end
-end # NOT SURE WHAT THIS IS FOR, check what happens when we evaluate ψ in rejection sampler etc
+end

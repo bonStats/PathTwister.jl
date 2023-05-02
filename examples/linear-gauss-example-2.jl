@@ -85,7 +85,8 @@ bestψ[1].J
 # Particle Structure #
 mutable struct TTVectorParticle{d} <: AbstractParticle # TT = Tempered Twist by β
     x::SVector{d, Float64}
-    β::Float64
+    β₀::Float64 # current
+    β₁::Float64 # next
     TTVectorParticle{d}() where d = new()
 end
 ##
@@ -155,14 +156,33 @@ p
 chainψ(p, Random.GLOBAL_RNG, 2, oldp, nothing)
 p
 
-# Potential Structure # TODO...
-struct TwistedMvNormalNoise <: LogPotentials
-    obs::Vector{MvNormal}
+# Twisted Potential Structure
+struct MCTwistedLogPotentials <: LogPotentials
+    G::LogPotentials # original potentials
+    M::AbstractMarkovChain # original chain
+    ψ::AbstractVector{<:AbstractTwist}
+    Nₘ::Int64
 end
 
-TwistedMvNormalNoise(y::Vector{Vector{R}}, Σ) where {R<:Real} = TwistedMvNormalNoise([MvNormal(y[p], Σ) for p in 1:length(y)])
+Gψ = MCTwistedLogPotentials(potential, chain, bestψ, Nα)
 
-function (G::TwistedMvNormalNoise)(p::Int64, particle::AbstractParticle, ::Nothing)
-    return logpdf(G.obs[p], value(particle))
+# needs to depend on rng in final version... (only serial for now)
+function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::Nothing)
+    
+    logpot = logpdf(Gψ.G.obs[p], value(particle)) - Gψ.ψ[p](value(particle), :log)
+    
+    if p < length(Gψ.chain)
+        newparticles = [typeof(particle)() for _ in 1:Gψ.Nₘ]
+        Gψ.M.(newparticles, [Random.GLOBAL_RNG], [p+1], [particle], [nothing])
+        logpot += logsumexp(particle.β .* Gψ.ψ[p+1](newparticles, :log)) - log(Gψ.Nₘ)
+    end
+
+    if p == 1
+        newparticles = [typeof(particle)() for _ in 1:Gψ.Nₘ]
+        Gψ.M.(newparticles, [Random.GLOBAL_RNG], [1], [particle], [nothing]) # doesn't use particle
+        logpot += logsumexp(β .* Gψ.ψ[1](newparticles, :log)) - log(Gψ.Nₘ)
+    end
+
+    return logpot
 end
 ##
