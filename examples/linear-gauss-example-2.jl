@@ -93,60 +93,106 @@ end
 
 # Twisted Distribution
 
-# Twisted Markov Kernel
-struct TwistedLinearGaussMarkovKernel{R<:Real} <: MarkovKernel
-    M::LinearGaussMarkovKernel{R}
-    ψ::AbstractTwist
+function (M::LinearGaussMarkovKernel{R})(p::TTVectorParticle, ψ::AbstractTwist) where {R<:Real}
+    d = MvNormal(M.A * p.x + M.b, M.Σ)
+    return RejectionSampler(d, ψ, p.β₁, MAXITER)
+end
+
+# Tempering Value Markov Kernel β
+
+struct TemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
+    d::Sampleable{<:VariateForm,<:ValueSupport}
+    ψ::T
     logα::Float64 # acceptance target
     Nₐ::Int64 # sample to estimate acceptance rate
 end
 
-# vectorised constructor
-TwistedLinearGaussMarkovKernel(
-    M::LinearGaussMarkovKernel{R}, 
-    ψ::AbstractVector{T}, 
-    logα::Float64,  Nₐ::Int64) where {R<:Real,T<:AbstractTwist} = TwistedLinearGaussMarkovKernel.([M], ψ, [logα], [Nₐ])
-
-function (Mψ::TwistedLinearGaussMarkovKernel{R})(rng, x::AbstractVector{R}) where {R<:Real} 
+function Base.rand(rng::AbstractRNG, s::TemperAdaptSampler{T}) where {T<:AbstractTwist}
+        
     # choose β from trial draws
-    d = MvNormal(Mψ.M.A * x + Mψ.M.b, Mψ.M.Σ)
-    logψx = Mψ.ψ(rand(rng, d, Mψ.Nₐ), :log)
+    logψx = s.ψ(rand(rng, s.d, s.Nₐ), :log)
 
     # define reach_acc_rate(b) > 0 if accept target is exceeded
-    reach_acc_rate(b::Float64) = logsumexp(b .* logψx) - log(Mψ.Nₐ) - Mψ.logα
+    reach_acc_rate(b::Float64) = logsumexp(b .* logψx) - log(s.Nₐ) - s.logα
     if reach_acc_rate(1.0) > 0
         β = 1.0
     else
         β = find_zero(reach_acc_rate, (0,1))
     end
 
-    return RejectionSampler(d, Mψ.ψ, β, MAXITER)
-
+    return β
 end
 
-function (chain::MarkovChain{D,K})(new::TTVectorParticle, rng, p::Int64, old::TTVectorParticle, ::Nothing) where {D<:AdaptiveRejection,K<:TwistedLinearGaussMarkovKernel}
-    # warning changes! new::AbstractParticle
-    d = (p == 1) ? chain[1](rng) : chain[p](rng, old)
-    #new.x = rand(rng, isa(d, Sampleable) ? d : d(rng))
-    #rand!(rng, isa(d, Sampleable) ? d : d(), new.x)
-    newx = Array{eltype(d)}(undef, size(d))
-    rand!(rng, d, newx)
+struct TemperTwist <: MarkovKernel
+    logα::Float64 # acceptance target
+    Nₐ::Int64 # sample to estimate acceptance rate
+end
+
+(Mβ::TemperTwist)(d::Sampleable, ψ::AbstractTwist) = TemperAdaptSampler(d, ψ, Mβ.logα, Mβ.Nₐ)
+
+
+# function (Mβ::TemperTwist)(x::AbstractVector{R}, μ::AdaptiveRejection{S,T}, ψ::AbstractTwist) where {R<:Real,S<:Sampleable,T<:AbstractTwist}
+#     return TemperAdaptSampler(μ, ψ, Mβ.logα, Mβ.Nₐ)
+# end
+
+
+
+struct AdaptiveTwistedMarkovChain{D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist} <: AbstractMarkovChain
+    μ::D
+    M::K
+    Mβ::TemperTwist
+    n::Int64
+    ψ::AbstractVector{T}
+end
+
+function Base.getindex(chain::AdaptiveTwistedMarkovChain{D,K,T}, i::Integer; base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
+
+    if base
+        if i == 1
+            return chain.μ
+        else
+            return (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
+        end
+    end
+
+    if i == 1
+        return (tt) -> AdaptiveRejection(chain.μ, chain.ψ[1], tt.logα, tt.Nₐ, MAXITER)
+    elseif i <= length(chain)
+        return (old) -> RejectionSampler(chain.M[i-1](old), ψ[i], old.β₁, MAXITER)
+    else
+        @error "Index $i not defined for chain."
+    end
+ end
+
+function (chain::AdaptiveTwistedMarkovChain{D,K,T})(new::TTVectorParticle, rng, p::Int64, old::TTVectorParticle, ::Nothing) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
+    # function changes! new::TTVectorParticle
+    Mψx = (p == 1) ? chain[1](chain.Mβ)(rng) : chain[p](old) 
+    # chain[p] == twisted mutation/distribution at p
+    
+    # mutate: x
+    newx = Array{eltype(Mψx)}(undef, size(Mψx))
+    rand!(rng, Mψx, newx)
     new.x = newx
-    new.β = d.β
+
+    # mutate: current β
+    new.β₀ = (p == 1) ? Mψx.β : old.β₁
+
+    # mutate: next βx
+    if p < length(chain)
+        Mβ = chain.Mβ(chain[p+1, base = true](newx), chain.ψ[p+1])
+        new.β₁ = rand(rng, Mβ)
+    end
+
 end
 
-ℓα = log(0.05)
-Nα = 5
 
-μψ = AdaptiveRejection(μ, bestψ[1], ℓα, Nα, MAXITER)
-Mψ = TwistedLinearGaussMarkovKernel(M, bestψ[2:end], ℓα, Nα)
-
-chainψ = MarkovChain(μψ, Mψ)
+Mβ = TemperTwist(log(0.05), 5)
+chainψ = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ)
 
 # test twisted chain...
 p = TTVectorParticle{d}()
 p.x = randn(2)
-p.β = 0.01
+p.β₀ = p.β₁ = 0.01
 
 oldp = deepcopy(p)
 
