@@ -147,21 +147,28 @@ end
 
 function Base.getindex(chain::AdaptiveTwistedMarkovChain{D,K,T}, i::Integer; base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
 
-    if base
-        if i == 1
-            return chain.μ
-        else
-            return (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
-        end
-    end
-
     if i == 1
-        return (tt) -> AdaptiveRejection(chain.μ, chain.ψ[1], tt.logα, tt.Nₐ, MAXITER)
+
+        if base
+            return chain.μ
+        else 
+            return (tt) -> AdaptiveRejection(chain.μ, chain.ψ[1], tt.logα, tt.Nₐ, MAXITER)
+        end
+
     elseif i <= length(chain)
-        return (old) -> RejectionSampler(chain.M[i-1](old), ψ[i], old.β₁, MAXITER)
+
+        M = (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
+
+        if base
+            return M
+        else
+            return (old) -> RejectionSampler(M(old), chain.ψ[i], old.β₁, MAXITER)
+        end
+
     else
         @error "Index $i not defined for chain."
     end
+
  end
 
 function (chain::AdaptiveTwistedMarkovChain{D,K,T})(new::TTVectorParticle, rng, p::Int64, old::TTVectorParticle, ::Nothing) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
