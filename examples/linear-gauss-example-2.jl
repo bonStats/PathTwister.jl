@@ -6,6 +6,7 @@ using Random
 using PathTwister
 using Roots
 import StatsFuns: logsumexp
+import StatsBase: countmap
 
 const MAXITER = 10^5
 
@@ -217,25 +218,50 @@ struct MCTwistedLogPotentials <: LogPotentials
     Nₘ::Int64
 end
 
-Gψ = MCTwistedLogPotentials(potential, chain, bestψ, Nα)
-
 # needs to depend on rng in final version... (only serial for now)
 function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::Nothing)
     
     logpot = logpdf(Gψ.G.obs[p], value(particle)) - Gψ.ψ[p](value(particle), :log)
     
-    if p < length(Gψ.chain)
-        newparticles = [typeof(particle)() for _ in 1:Gψ.Nₘ]
+    if p == length(Gψ.M)
+        return logpot
+    end
+    
+    newparticles = [typeof(particle)() for _ in 1:Gψ.Nₘ]
+    
+    if p < length(Gψ.M)
         Gψ.M.(newparticles, [Random.GLOBAL_RNG], [p+1], [particle], [nothing])
-        logpot += logsumexp(particle.β .* Gψ.ψ[p+1](newparticles, :log)) - log(Gψ.Nₘ)
+        logpot += logsumexp(particle.β₀ .* Gψ.ψ[p+1](newparticles, :log)) - log(Gψ.Nₘ)
     end
 
     if p == 1
-        newparticles = [typeof(particle)() for _ in 1:Gψ.Nₘ]
-        Gψ.M.(newparticles, [Random.GLOBAL_RNG], [1], [particle], [nothing]) # doesn't use particle
-        logpot += logsumexp(β .* Gψ.ψ[1](newparticles, :log)) - log(Gψ.Nₘ)
+        Gψ.M.(newparticles, [Random.GLOBAL_RNG], [1], [particle], [nothing]) # doesn't use particle, overrides newparticles
+        logpot += logsumexp(particle.β₀ .* Gψ.ψ[1](newparticles, :log)) - log(Gψ.Nₘ)
     end
 
     return logpot
 end
-##
+
+potentialψ = MCTwistedLogPotentials(potential, chain, bestψ, 5)
+
+potentialψ(10, p, nothing)
+
+
+modelψ = SMCModel(chainψ, potentialψ, n, TTVectorParticle{d}, Nothing)
+
+smcioψ = SMCIO{modelψ.particle, modelψ.pScratch}(2^10, 10, 1, true)
+
+
+smc!(model, smcio)
+smc!(modelψ, smcioψ)
+
+mean(smcio.esses)
+mean(smcioψ.esses)
+
+countmap(smcio.eves)
+countmap(smcioψ.eves)
+
+sum(smcio.logZhats)
+sum(smcioψ.logZhats)
+
+# check working...
