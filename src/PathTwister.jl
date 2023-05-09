@@ -26,4 +26,6 @@ export RejectionSampler, rand, rand!
 include("adaptive-rejection-dist.jl")
 export AdaptiveRejection
 
+include("flat-twist.jl/flat-struct.jl")
+
 end

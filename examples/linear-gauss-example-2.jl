@@ -10,6 +10,9 @@ import StatsBase: countmap
 
 const MAXITER = 10^5
 
+N = 2^16
+Nmc = 2^4
+
 # Particle Structure #
 mutable struct VectorParticle{d} <: AbstractParticle
     x::SVector{d, Float64}
@@ -40,7 +43,7 @@ end
 ##
 
 # setup problem
-n = 10
+n = 3
 d = 2
 μ = MvNormal(d, 1.)
 
@@ -69,7 +72,7 @@ potential = MvNormalNoise(y, 1.0*I)
 
 model = SMCModel(chain, potential, n, VectorParticle{d}, Nothing)
 
-smcio = SMCIO{model.particle, model.pScratch}(2^10, 10, 1, true)
+smcio = SMCIO{model.particle, model.pScratch}(N, n, 1, true)
 
 smc!(model, smcio)
 
@@ -194,7 +197,7 @@ function (chain::AdaptiveTwistedMarkovChain{D,K,T})(new::TTVectorParticle, rng, 
 end
 
 
-Mβ = TemperTwist(log(0.05), 5)
+Mβ = TemperTwist(log(0.05), Nmc)
 chainψ = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ)
 
 # test twisted chain...
@@ -221,7 +224,7 @@ end
 # needs to depend on rng in final version... (only serial for now)
 function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::Nothing)
     
-    logpot = logpdf(Gψ.G.obs[p], value(particle)) - Gψ.ψ[p](value(particle), :log)
+    logpot = logpdf(Gψ.G.obs[p], value(particle)) - (particle.β₀ * Gψ.ψ[p](value(particle), :log))
     
     if p == length(Gψ.M)
         return logpot
@@ -231,7 +234,7 @@ function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::N
     
     if p < length(Gψ.M)
         Gψ.M.(newparticles, [Random.GLOBAL_RNG], [p+1], [particle], [nothing])
-        logpot += logsumexp(particle.β₀ .* Gψ.ψ[p+1](newparticles, :log)) - log(Gψ.Nₘ)
+        logpot += logsumexp(particle.β₁ .* Gψ.ψ[p+1](newparticles, :log)) - log(Gψ.Nₘ)
     end
 
     if p == 1
@@ -242,26 +245,38 @@ function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::N
     return logpot
 end
 
-potentialψ = MCTwistedLogPotentials(potential, chain, bestψ, 5)
+potentialψ = MCTwistedLogPotentials(potential, chain, bestψ, Nmc)
 
-potentialψ(10, p, nothing)
+potentialψ(n, p, nothing)
 
 
 modelψ = SMCModel(chainψ, potentialψ, n, TTVectorParticle{d}, Nothing)
 
-smcioψ = SMCIO{modelψ.particle, modelψ.pScratch}(2^10, 10, 1, true)
+smcioψ = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
 
 
 smc!(model, smcio)
 smc!(modelψ, smcioψ)
 
-mean(smcio.esses)
-mean(smcioψ.esses)
+[smcio.esses smcioψ.esses]
 
 countmap(smcio.eves)
 countmap(smcioψ.eves)
 
-sum(smcio.logZhats)
-sum(smcioψ.logZhats)
 
 # check working...
+
+flatψ = repeat([PathTwister.FlatTwist(Float64)], n)
+chainψflat = AdaptiveTwistedMarkovChain(μ, M, TemperTwist(log(0.05), 1), n, flatψ)
+potentialψflat = MCTwistedLogPotentials(potential, chain, flatψ, 1)
+
+modelψflat = SMCModel(chainψflat, potentialψflat, n, TTVectorParticle{d}, Nothing)
+
+smcioψflat = SMCIO{modelψflat.particle, modelψflat.pScratch}(N, n, 1, true)
+
+smc!(modelψflat, smcioψflat)
+
+
+smcio.logZhats[end]
+smcioψ.logZhats[end]
+smcioψflat.logZhats[end]
