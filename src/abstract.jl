@@ -37,3 +37,10 @@ function Base.getindex(chain::AbstractMarkovChain, i::Integer)
 end
 
 abstract type LogPotentials <:Function end
+
+# applies to all AbstractMarkovChain and LogPotentials <: Function
+# for use in learning twisting functions
+function untwist(f::F) where  {F<:Function}
+    @warn "Default untwist(...) is identify function, if $(typeof(f)) is twisted, define new function PathTwister.untwist(x::$(typeof(f))). This warning is only diplayed once per session." maxlog=1
+    return f
+end 

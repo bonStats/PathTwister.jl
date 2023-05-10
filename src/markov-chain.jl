@@ -26,3 +26,4 @@ end
 
 MarkovChain(μ::D, M::K, n::Int64) where {D,K} = HomogeneousMarkovChain(μ, M, n)
 
+untwist(chain::Union{MarkovChain,HomogeneousMarkovChain}) = chain

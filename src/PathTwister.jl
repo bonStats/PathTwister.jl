@@ -11,7 +11,7 @@ import Roots: find_zero
 
 include("abstract.jl")
 export AbstractParticle, AbstractTwist, MarkovKernel, AbstractMarkovChain, LogPotentials
-export value
+export value, untwist
 
 include("markov-chain.jl")
 export MarkovChain, HomogeneousMarkovChain

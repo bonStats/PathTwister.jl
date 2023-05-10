@@ -11,7 +11,7 @@ import StatsBase: countmap
 const MAXITER = 10^5
 
 N = 2^16
-Nmc = 2^4
+Nmc = 2^7
 
 # Particle Structure #
 mutable struct VectorParticle{d} <: AbstractParticle
@@ -40,6 +40,8 @@ MvNormalNoise(y::Vector{Vector{R}}, Σ) where {R<:Real} = MvNormalNoise([MvNorma
 function (G::MvNormalNoise)(p::Int64, particle::AbstractParticle, ::Nothing)
     return logpdf(G.obs[p], value(particle))
 end
+
+PathTwister.untwist(G::MvNormalNoise) = G
 ##
 
 # setup problem
@@ -149,6 +151,8 @@ struct AdaptiveTwistedMarkovChain{D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist
     ψ::AbstractVector{T}
 end
 
+PathTwister.untwist(chain::AdaptiveTwistedMarkovChain) = MarkovChain(chain.μ, chain.M, chain.n)
+
 function Base.getindex(chain::AdaptiveTwistedMarkovChain{D,K,T}, i::Integer; base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
 
     if i == 1
@@ -221,6 +225,8 @@ struct MCTwistedLogPotentials <: LogPotentials
     Nₘ::Int64
 end
 
+PathTwister.untwist(Gψ::MCTwistedLogPotentials) = Gψ.G
+
 # needs to depend on rng in final version... (only serial for now)
 function (Gψ::MCTwistedLogPotentials)(p::Int64, particle::TTVectorParticle, ::Nothing)
     
@@ -280,3 +286,33 @@ smc!(modelψflat, smcioψflat)
 smcio.logZhats[end]
 smcioψ.logZhats[end]
 smcioψflat.logZhats[end]
+
+SequentialMonteCarlo.V(smcio, (x) -> 1, true, false, n)
+SequentialMonteCarlo.V(smcioψ, (x) -> 1, true, false, n)
+
+bestψ2 = deepcopy(bestψ)
+
+lassocvtwist!(bestψ2, smcioψ, modelψ, 4, cvstrategy = 8)
+
+
+chainψ2 = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ2)
+potentialψ2 = MCTwistedLogPotentials(potential, chain, bestψ2, Nmc)
+
+modelψ2 = SMCModel(chainψ2, potentialψ2, n, TTVectorParticle{d}, Nothing)
+smcioψ2 = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
+
+smc!(modelψ2, smcioψ2)
+
+[smcio.esses smcioψ.esses smcioψ2.esses]
+
+countmap(smcio.eves)
+countmap(smcioψ.eves)
+countmap(smcioψ2.eves)
+
+smcio.logZhats[end]
+smcioψ.logZhats[end]
+smcioψ2.logZhats[end]
+
+SequentialMonteCarlo.V(smcio, x -> 1, true, false, n)
+SequentialMonteCarlo.V(smcioψ, x -> 1, true, false, n)
+SequentialMonteCarlo.V(smcioψ2, x -> 1, true, false, n)

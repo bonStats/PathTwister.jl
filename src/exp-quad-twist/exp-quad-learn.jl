@@ -1,6 +1,8 @@
 # input SequentialMonteCarlo
 # output twisting functions
 
+# note untwist == identity by default
+
 function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
     # TD: how to check if smc!(smcio, model) has been run?
     # TD: Investigate if need scratch for extra particles
@@ -29,7 +31,7 @@ function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::
                 padparticles = [[model.particle() for _ in 1:smcio.N] for _ in 2:MCreps]
                 pushfirst!(padparticles, smcio.allZetas[model.maxn])
                 for t in 2:MCreps
-                    model.M!.(padparticles[t], [GLOBAL_RNG], [model.maxn], smcio.allZetas[model.maxn-1], [nothing]) #rng
+                    untwist(model.M!).(padparticles[t], [GLOBAL_RNG], [model.maxn], smcio.allZetas[model.maxn-1], [nothing]) #rng
                 end
             else 
                 padparticles = [smcio.allZetas[model.maxn]] # always a vector (of Vector{Particle})
@@ -62,10 +64,10 @@ end
 
 # build respose variables y = log{ Gₜ(xₜ) Mₜ₊₁(ψₜ₊₁)(xₜ) }
 function buildresponse(particles::Vector{<:P}, model::SMCModel, p::Int64, ψ::Union{T, Nothing} = nothing, rng = GLOBAL_RNG) where {P<:AbstractParticle,T<:AbstractTwist}
-    ℓresp = model.lG.([p], particles, nothing) #ℓGp
+    ℓresp = untwist(model.lG).([p], particles, nothing) #ℓGp
     if !isnothing(ψ) # when p == n
         newparticles = [model.particle() for i in 1:length(particles)]
-        model.M!.(newparticles, [rng], [p+1], particles, [nothing])
+        untwist(model.M!).(newparticles, [rng], [p+1], particles, [nothing])
         ℓresp += ψ(newparticles, :log)
     end
     return ℓresp
