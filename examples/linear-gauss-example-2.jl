@@ -8,6 +8,9 @@ using Roots
 import StatsFuns: logsumexp
 import StatsBase: countmap
 
+## Exact normalising constant
+using Kalman, GaussianDistributions
+
 const MAXITER = 10^5
 
 N = 2^16
@@ -70,6 +73,20 @@ for p in 2:n
     y[p] = latentx[p] + rand(noise)
 end
 
+## exact normalising constant
+D = Matrix(Diagonal(ones((d,))))  
+
+# Define evolution scheme
+Kevo = LinearEvolution(A, Gaussian(b, Σ))
+
+# Define observation scheme
+Kobs = LinearObservation(Kevo, D, D)
+
+# Filter
+Xf, truelogZ = kalmanfilter(Kobs, 1 => Gaussian(zeros(d), Matrix(μ.Σ)), 1:n .=> y)
+
+
+## SMC 
 potential = MvNormalNoise(y, 1.0*I)
 
 model = SMCModel(chain, potential, n, VectorParticle{d}, Nothing)
@@ -266,6 +283,9 @@ smc!(modelψ, smcioψ)
 
 [smcio.esses smcioψ.esses]
 
+smcio.logZhats[end] - truelogZ
+smcioψ.logZhats[end] - truelogZ
+
 countmap(smcio.eves)
 countmap(smcioψ.eves)
 
@@ -303,16 +323,31 @@ smcioψ2 = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
 
 smc!(modelψ2, smcioψ2)
 
-[smcio.esses smcioψ.esses smcioψ2.esses]
+bestψ3 = deepcopy(bestψ2)
 
-countmap(smcio.eves)
-countmap(smcioψ.eves)
-countmap(smcioψ2.eves)
+lassocvtwist!(bestψ3, smcioψ2, modelψ2, 4, cvstrategy = 8)
 
-smcio.logZhats[end]
-smcioψ.logZhats[end]
-smcioψ2.logZhats[end]
+chainψ3 = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ3)
+potentialψ3 = MCTwistedLogPotentials(potential, chain, bestψ2, Nmc)
 
-SequentialMonteCarlo.V(smcio, x -> 1, true, false, n)
-SequentialMonteCarlo.V(smcioψ, x -> 1, true, false, n)
-SequentialMonteCarlo.V(smcioψ2, x -> 1, true, false, n)
+modelψ3 = SMCModel(chainψ3, potentialψ3, n, TTVectorParticle{d}, Nothing)
+smcioψ3 = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
+
+smc!(modelψ3, smcioψ3)
+
+map(s -> s.esses, [smcio, smcioψ, smcioψ2, smcioψ3])
+
+map(s -> length(countmap(s.eves)), [smcio, smcioψ, smcioψ2, smcioψ3])
+
+map(s -> s.logZhats[end], [smcio, smcioψ, smcioψ2, smcioψ3])
+
+map(s -> SequentialMonteCarlo.V(s, x -> 1, true, false, n), 
+[smcio, smcioψ, smcioψ2, smcioψ3])
+
+
+map(s -> [mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n], [smcioψ, smcioψ2, smcioψ3])
+
+
+
+
+
