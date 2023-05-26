@@ -17,8 +17,8 @@ end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
     Mλ::Sampleable{<:VariateForm,<:ValueSupport} # partial
-    λ::ExpTilt{R}
-    r::ExpQuadTwist{R}
+    λ::ExpTilt{<:Real}
+    r::ExpQuadTwist{<:Real}
     logZMλ::Float64
     logα::Float64 # acceptance target
     Nₐ::Int64 # sample to estimate acceptance rate

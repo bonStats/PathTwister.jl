@@ -22,6 +22,10 @@ include("linear-gauss-hmm.jl")
 # Types: TTVectorParticle, TemperAdaptSampler, TemperTwist, AdaptiveTwistedMarkovChain, MCTwistedLogPotentials
 include("adaptive-temp-twist.jl")
 
+# Types: ExpTilt, TwistDecomp, DecompTemperAdaptSampler, DecompTwistVectorParticle, DecompTemperKernel, 
+# DecompTwistedMarkovChain, MCDecompTwistedLogPotentials
+include("adaptive-temp-twist-partial.jl")
+
 # setup problem
 n = 20
 d = 2
