@@ -4,6 +4,16 @@ end
 
 ExpTilt{R}(d::Int64) where {R<:Real} = ExpTilt(zeros(R,d))
 
+function (λ::ExpTilt{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
+    ℓval = x' * λ.h
+    if outscale == :log
+        return ℓval
+    else
+        @warn "Returning on standard scale, logscale = $ℓpdf"
+        exp(ℓval)
+    end
+end
+
 tilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ + d.Σ*λ.h, d.Σ)
 
 Base.:/(ψ::ExpQuadTwist{R}, λ::ExpTilt{R}) where {R<:Real} = ExpQuadTwist(ψ.h - λ.h, ψ.J)
@@ -13,12 +23,13 @@ struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
     λ::ExpTilt{R}
     r::ExpQuadTwist{R}
     β::Float64
+    logZMλ::Float64
 end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
     Mλ::Sampleable{<:VariateForm,<:ValueSupport} # partial
     λ::ExpTilt{<:Real}
-    r::ExpQuadTwist{<:Real}
+    r::T
     logZMλ::Float64
     logα::Float64 # acceptance target
     Nₐ::Int64 # sample to estimate acceptance rate
@@ -38,11 +49,11 @@ struct DecompTemperKernel{T<:AbstractTwist}
     Nₐ::Int64 # sample to estimate acceptance rate
 end
 
-function (K::DecompTemperKernel{ExpQuadTwist{R}})(d::AbstractMvNormal, ψ::ExpQuadTwist{R}) where {R<:Real}
+function (K::DecompTemperKernel{T})(d::AbstractMvNormal, ψ::T) where {R<:Real, T<:ExpQuadTwist{R}}
     # best partial analytical
     b = (inv(ψ.J) + cov(d)) \ ((ψ.J \ ψ.h) - mean(d))
     λ = ExpTilt(b)
-    r = λ / ψ
+    r = ψ / λ
     Mλ = tilt(d, λ)
     logZMλ = (b' * cov(d) * b)/2 + mean(d)' * b
     return DecompTemperAdaptSampler(Mλ, λ, r, logZMλ, K.logα, K.Nₐ)
@@ -51,7 +62,7 @@ end
 function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}}) where {R<:Real}
         
     # choose β from trial draws
-    logrx = s.ψ(rand(rng, s.Mλ, s.Nₐ), :log)
+    logrx = s.r(rand(rng, s.Mλ, s.Nₐ), :log)
 
     # define reach_acc_rate(b) > 0 if accept target is exceeded
     reach_acc_rate(b::Float64) = logsumexp(b .* logrx) - log(s.Nₐ) - s.logα
@@ -61,7 +72,7 @@ function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}
         β = find_zero(reach_acc_rate, (0,1))
     end
 
-    return TwistDecomp(s.Mλ, s.λ, s.r, β)
+    return TwistDecomp(s.Mλ, s.λ, s.r, β, s.logZMλ)
 end
 
 # Twisted Distribution
@@ -76,63 +87,32 @@ end
 
 PathTwister.untwist(chain::DecompTwistedMarkovChain) = MarkovChain(chain.μ, chain.M, chain.n)
 
-function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
-    #twisted M
-    if i == 1
-        #return (new) -> RejectionSampler(tilt(chain.μ, new.twₚ.λ), new.twₚ.r, new.twₚ.β, MAXITER)
-        return (new) -> RejectionSampler(new.twₚ.Mλ, new.twₚ.r, new.twₚ.β, MAXITER)
-    elseif i <= length(chain)
-        #M = (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
-        #return (old) -> RejectionSampler(tilt(M(old), old.twₚ₊₁.λ), old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
-        return (old) -> RejectionSampler(old.twₚ₊₁.Mλ, old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
-    else
-        @error "Index $i not defined for chain."
-    end
-
-end
-
-function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer, base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
-
+function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer; base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
+    
     if !base
-        return getindex(chain, i)
+        # twisted M, base = false
+        if i == 1
+            #return (new) -> RejectionSampler(tilt(chain.μ, new.twₚ.λ), new.twₚ.r, new.twₚ.β, MAXITER)
+            return (new) -> RejectionSampler(new.twₚ.Mλ, new.twₚ.r, new.twₚ.β, MAXITER)
+        elseif i <= length(chain)
+            #M = (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
+            #return (old) -> RejectionSampler(tilt(M(old), old.twₚ₊₁.λ), old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
+            return (old) -> RejectionSampler(old.twₚ₊₁.Mλ, old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
+        else
+            @error "Index $i not defined for chain."
+        end
+    else 
+        # untwisted M, base = true
+        if i == 1
+            return chain.μ
+        elseif i <= length(chain)
+            return (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
+        else
+            @error "Index $i not defined for chain."
+        end
     end
-
-    # base = true
-    if i == 1
-        return chain.μ
-    elseif i <= length(chain)
-        return (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
-    else
-        @error "Index $i not defined for chain."
-    end
-
- end
-
-# function Base.getindex(chain::AdaptiveTwistedMarkovChain{D,K,T}, i::Integer; base::Bool = false) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
-
-#     if i == 1
-
-#         if base
-#             return chain.μ
-#         else 
-#             return (new) -> RejectionSampler(tilt(chain.μ, new.twₚ.λ), new.twₚ.r, new.twₚ.β, MAXITER)
-#         end
-
-#     elseif i <= length(chain)
-
-#         M = (chain.M isa AbstractVector) ? chain.M[i-1] : chain.M
-
-#         if base
-#             return M
-#         else
-#             return (old) -> RejectionSampler(tilt(M(old), old.twₚ₊₁.λ), old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
-#         end
-
-#     else
-#         @error "Index $i not defined for chain."
-#     end
-
-#  end
+    
+end
 
 function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle, rng, p::Int64, old::DecompTwistVectorParticle, ::Nothing) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
     # calculate decomp (repeated per particle - inefficient)
@@ -159,8 +139,8 @@ function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle
 
     # mutate: next twist
     if p < length(chain)
-        λKₚ = chain.λK(chain[p+1, base = true](newx), chain.ψ[p+1])
-        new.twₚ₊₁ = rand(rng, λKₚ)
+        λKₚ₊₁ = chain.λK(chain[p+1, base = true](newx), chain.ψ[p+1])
+        new.twₚ₊₁ = rand(rng, λKₚ₊₁)
     end
 
 end
@@ -180,29 +160,29 @@ function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVect
 
     logpot = logpdf(Gψ.G.obs[p], value(particle)) - logψₚ(value(particle))
     
-    if p == length(Gψ.M)
+    if p == length(Gψ.G)
         return logpot
     end
     
-    if p < length(Gψ.M)
+    if p < length(Gψ.G)
         Mλ = particle.twₚ₊₁.Mλ #Mₚ₊₁^λ(xₚ, ⋅)
-        logZMλ = particle.twₚ₊₁.λlogZMλ
+        logZMλ = particle.twₚ₊₁.logZMλ
         r = particle.twₚ₊₁.r
         β = particle.twₚ₊₁.β  
 
         x = rand(Random.GLOBAL_RNG, Mλ, Gψ.Nₘ) # ~ Mₚ₊₁^λ(xₚ, ⋅) # move to rand(DecompTemperKernel,...), combine with logZMλ
-        logpot += logsumexp(β .* r.(x, :log)) - log(Gψ.Nₘ)
+        logpot += logsumexp(β .* r(x, :log)) - log(Gψ.Nₘ)
         logpot += logZMλ
     end
 
     if p == 1
         Mλ = particle.twₚ.Mλ #Mₚ^λ(xₚ₋₁, ⋅)
-        logZMλ = particle.twₚ.λlogZMλ
+        logZMλ = particle.twₚ.logZMλ
         r = particle.twₚ.r
         β = particle.twₚ.β  
 
         x = rand(Random.GLOBAL_RNG, Mλ, Gψ.Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
-        logpot += logsumexp(β .* r.(x, :log)) - log(Gψ.Nₘ)
+        logpot += logsumexp(β .* r(x, :log)) - log(Gψ.Nₘ)
         logpot += logZMλ
     end
 

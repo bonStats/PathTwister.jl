@@ -14,7 +14,7 @@ using Kalman, GaussianDistributions
 const MAXITER = 10^5
 
 N = 2^10
-Nmc = 2^3
+Nmc = 2^0
 
 # Types: VectorParticle, LinearGaussMarkovKernel, MvNormalNoise
 include("linear-gauss-hmm.jl")
@@ -82,14 +82,14 @@ lassocvtwist!(bestψ, smcio, model, 4, cvstrategy = 8)
 
 # locally twisted SMC
 
-Mβ = TemperTwist(log(0.05), Nmc)
+Mβ = TemperTwist(log(0.15), Nmc)
 chainψ = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ)
 
 potentialψ = MCTwistedLogPotentials(potential, chain, bestψ, Nmc)
 
 modelψ = SMCModel(chainψ, potentialψ, n, TTVectorParticle{d}, Nothing)
 
-smcioψ = SMCIO{modelψ.particle, modelψ.pScratch}(N ÷ 8, n, 1, true)
+smcioψ = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
 
 
 smc!(model, smcio)
@@ -170,3 +170,20 @@ map(s -> minimum([mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n]), [smcio�
 
 
 
+DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.15), Nmc)
+Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ)
+
+Dpotentialψ = MCDecompTwistedLogPotentials(potential, Nmc)
+
+Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+
+Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*8, n, 1, true)
+
+smc!(Dmodelψ, Dsmcioψ)
+
+Dsmcioψ.logZhats[end] .- truelogZ
+
+
+map(s -> s.logZhats[end], [smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ]) .- truelogZ
+
+minimum([mean(getfield.(getfield.(Dsmcioψ.allZetas[i], :twₚ₊₁),:β)) for i in 1:n])

@@ -20,6 +20,8 @@ struct MvNormalNoise <: LogPotentials
     obs::Vector{MvNormal}
 end
 
+Base.length(G::MvNormalNoise) = length(G.obs)
+
 MvNormalNoise(y::Vector{Vector{R}}, Σ) where {R<:Real} = MvNormalNoise([MvNormal(y[p], Σ) for p in 1:length(y)])
 
 function (G::MvNormalNoise)(p::Int64, particle::AbstractParticle, ::Nothing)
