@@ -35,9 +35,9 @@ end
 
 function logmcpotential(rng, x::AbstractVector{R}, twistₚ::TwistDecomp{R}, twistₚ₊₁::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
     
-    logψₚ(x) = twistₚ.λ(x, :log) + twistₚ.β * twistₚ.r(x, :log)
+    #logψₚ(x) = twistₚ.λ(x, :log) + twistₚ.β * twistₚ.r(x, :log)
 
-    return logmcpotential(rng, twistₚ₊₁, Nₘ) - logψₚ(x) # + log G === twisted potential
+    return logmcpotential(rng, twistₚ₊₁, Nₘ) #- logψₚ(x) # + log G === twisted potential
 
 end
 
