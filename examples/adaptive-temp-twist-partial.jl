@@ -26,6 +26,13 @@ struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
     logZMλ::Float64
 end
 
+function mcpotential(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
+
+    x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
+    return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
+
+end
+
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
     Mλ::Sampleable{<:VariateForm,<:ValueSupport} # partial
     λ::ExpTilt{<:Real}
@@ -160,30 +167,12 @@ function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVect
 
     logpot = logpdf(Gψ.G.obs[p], value(particle)) - logψₚ(value(particle))
     
-    if p == length(Gψ.G)
-        return logpot
-    end
-    
     if p < length(Gψ.G)
-        Mλ = particle.twₚ₊₁.Mλ #Mₚ₊₁^λ(xₚ, ⋅)
-        logZMλ = particle.twₚ₊₁.logZMλ
-        r = particle.twₚ₊₁.r
-        β = particle.twₚ₊₁.β  
-
-        x = rand(Random.GLOBAL_RNG, Mλ, Gψ.Nₘ) # ~ Mₚ₊₁^λ(xₚ, ⋅) # move to rand(DecompTemperKernel,...), combine with logZMλ
-        logpot += logsumexp(β .* r(x, :log)) - log(Gψ.Nₘ)
-        logpot += logZMλ
+        logpot += mcpotential(Random.GLOBAL_RNG, particle.twₚ₊₁, Gψ.Nₘ)
     end
 
     if p == 1
-        Mλ = particle.twₚ.Mλ #Mₚ^λ(xₚ₋₁, ⋅)
-        logZMλ = particle.twₚ.logZMλ
-        r = particle.twₚ.r
-        β = particle.twₚ.β  
-
-        x = rand(Random.GLOBAL_RNG, Mλ, Gψ.Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
-        logpot += logsumexp(β .* r(x, :log)) - log(Gψ.Nₘ)
-        logpot += logZMλ
+        logpot += mcpotential(Random.GLOBAL_RNG, particle.twₚ, Gψ.Nₘ)
     end
 
     return logpot
