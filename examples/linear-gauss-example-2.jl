@@ -168,22 +168,34 @@ map(s -> minimum([mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n]), [smcio�
 
 
 
+Nmc= 8
 
+DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.5), Nmc)
+Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ2, Nmc)
 
-DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.15), Nmc)
-Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ)
-
-Dpotentialψ = MCDecompTwistedLogPotentials(potential, Nmc)
+Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
 Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
 
-Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*8, n, 1, true)
+Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*100, n, 1, true)
 
 smc!(Dmodelψ, Dsmcioψ)
 
 Dsmcioψ.logZhats[end] .- truelogZ
 
 
+map(s -> minimum(s.esses), [smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ])
 map(s -> s.logZhats[end], [smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ]) .- truelogZ
 
 minimum([mean(getfield.(getfield.(Dsmcioψ.allZetas[i], :twₚ₊₁),:β)) for i in 1:n])
+
+
+i = 20; map(s -> (s[i].J \ s[i].h, s[i].J), [bestψ, bestψ2, bestψ3])
+
+
+smc!(model, smcio); smcio.logZhats[end] - truelogZ
+
+
+# update new version to handle just lambda = 1
+
+# recreate PhD experiments
