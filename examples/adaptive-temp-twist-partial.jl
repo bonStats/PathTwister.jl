@@ -26,6 +26,17 @@ struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
     logZMλ::Float64
 end
 
+function (twist::TwistDecomp{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
+    ℓval = 
+    if outscale == :log
+        return ℓval
+    else
+        @warn "Returning on standard scale, logscale = $ℓpdf"
+        exp(ℓval)
+    end
+
+end
+
 function logmcpotential(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
 
     x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
