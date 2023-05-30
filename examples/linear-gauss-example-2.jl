@@ -177,15 +177,29 @@ Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
 Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
 
-Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*100, n, 1, true)
+Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*10, n, 1, true)
 
 smc!(Dmodelψ, Dsmcioψ)
 
 Dsmcioψ.logZhats[end] .- truelogZ
 
 
+D0Mβ = TemperKernel{eltype(bestψ)}(log(0.5), Nmc)
+D0chainψ = DecompTwistedMarkovChain(μ, M, D0Mβ, n, bestψ2, Nmc)
+
+D0modelψ = SMCModel(D0chainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+
+D0smcioψ = SMCIO{D0modelψ.particle, D0modelψ.pScratch}(N*10, n, 1, true)
+
+smc!(D0modelψ, D0smcioψ)
+
+D0smcioψ.logZhats[end] .- truelogZ
+
+
 map(s -> minimum(s.esses), [smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ])
 map(s -> s.logZhats[end], [smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ]) .- truelogZ
+map(s -> SequentialMonteCarlo.V(s, x -> 1, true, false, n), 
+[smcio, smcioψ, smcioψ2, smcioψ3, Dsmcioψ])
 
 minimum([mean(getfield.(getfield.(Dsmcioψ.allZetas[i], :twₚ₊₁),:β)) for i in 1:n])
 
@@ -197,5 +211,7 @@ smc!(model, smcio); smcio.logZhats[end] - truelogZ
 
 
 # update new version to handle just lambda = 1
+
+# monitor rejection sampler
 
 # recreate PhD experiments

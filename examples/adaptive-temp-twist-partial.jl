@@ -1,3 +1,5 @@
+abstract type AbstractTemperKernel{T<:AbstractTwist} end
+
 mutable struct ExpTilt{R<:Real} <: AbstractTwist
     h::AbstractVector{R} # exp(x'h) .. same scale as potential vector in MvNormalCanon
 end
@@ -62,7 +64,7 @@ mutable struct DecompTwistVectorParticle{d} <: AbstractParticle # TT = Tempered 
 end
 
 # twisting functions markov kernel
-struct DecompTemperKernel{T<:AbstractTwist}
+struct DecompTemperKernel{T<:AbstractTwist} <: AbstractTemperKernel{T}
     logα::Float64 # acceptance target
     Nₐ::Int64 # sample to estimate acceptance rate
 end
@@ -99,7 +101,7 @@ end
 struct DecompTwistedMarkovChain{D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist} <: AbstractMarkovChain
     μ::D
     M::K
-    λK::DecompTemperKernel{T}
+    λK::AbstractTemperKernel{T}
     n::Int64
     ψ::AbstractVector{T}
     Nₘ::Int64 # MC repeats for twisted potential estimate
@@ -179,4 +181,20 @@ function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVect
     return logpdf(Gψ.G.obs[p], value(particle)) + particle.logψ̃
     # ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ) for p > 1.  For p == 1 includes M₁(ψ₁) factor also
 
+end
+
+
+
+# no decomposition
+
+# twisting functions markov kernel
+struct TemperKernel{T<:AbstractTwist} <: AbstractTemperKernel{T}
+    logα::Float64 # acceptance target
+    Nₐ::Int64 # sample to estimate acceptance rate
+end
+
+function (K::TemperKernel{T})(d::AbstractMvNormal, ψ::T) where {R<:Real, T<:ExpQuadTwist{R}}
+    # no partial analytical
+    λ = ExpTilt{R}(length(d)) # zero tilt
+    return DecompTemperAdaptSampler(d, λ, ψ, 0.0, K.logα, K.Nₐ)
 end
