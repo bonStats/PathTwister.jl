@@ -27,7 +27,7 @@ struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
 end
 
 function (twist::TwistDecomp{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
-    ℓval = 
+    ℓval = twist.λ(x, :log) + twist.β * twist.r(x, :log)
     if outscale == :log
         return ℓval
     else
@@ -37,19 +37,11 @@ function (twist::TwistDecomp{R})(x::AbstractVector{R}, outscale::Symbol) where {
 
 end
 
-function logmcpotential(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
+function logmcmeantwist(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
 
     x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
     return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
-
-end
-
-function logmcpotential(rng, x::AbstractVector{R}, twistₚ::TwistDecomp{R}, twistₚ₊₁::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
-    
-    #logψₚ(x) = twistₚ.λ(x, :log) + twistₚ.β * twistₚ.r(x, :log)
-
-    return logmcpotential(rng, twistₚ₊₁, Nₘ) #- logψₚ(x) # + log G === twisted potential
-
+    # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
 end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
@@ -64,9 +56,8 @@ end
 # Particle Structure #
 mutable struct DecompTwistVectorParticle{d} <: AbstractParticle # TT = Tempered Twist by β
     x::SVector{d, Float64} # current: t
-    twₚ::TwistDecomp{Float64} # current: t
     twₚ₊₁::TwistDecomp{Float64} # next: t + 1
-    logψ̃::Float64 # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ) for p > 1. For p == 1 includes M₁(ψ₁) factor also
+    logψ̃::Float64 # ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ)
     DecompTwistVectorParticle{d}() where d = new()
 end
 
@@ -102,6 +93,7 @@ function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}
     return TwistDecomp(s.Mλ, s.λ, s.r, β, s.logZMλ)
 end
 
+
 # Twisted Distribution
 
 struct DecompTwistedMarkovChain{D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist} <: AbstractMarkovChain
@@ -120,7 +112,7 @@ function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer; base:
     if !base
         # twisted M, base = false
         if i == 1
-            return (new) -> RejectionSampler(new.twₚ.Mλ, new.twₚ.r, new.twₚ.β, MAXITER)
+            return (twₚ) -> RejectionSampler(twₚ.Mλ, twₚ.r, twₚ.β, MAXITER)
         elseif i <= length(chain)
             return (old) -> RejectionSampler(old.twₚ₊₁.Mλ, old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
         else
@@ -141,37 +133,36 @@ end
 
 function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle, rng, p::Int64, old::DecompTwistVectorParticle, ::Nothing) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
     
-    new.logψ̃ = 0.0 # MC estimate of ψ⋅G^ψ / G
+    new.logψ̃ = 0.0 # MC estimate of ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ) for p > 1.  For p == 1 includes M₁(ψ₁) factor also
 
-    # calculate decomp (repeated per particle - inefficient)
+    # calculate decomp (repeated per particle - inefficient for p = 1)
     if p == 1
         λKₚ = chain.λK(chain[1, base = true], chain.ψ[1])
-        new.twₚ = rand(rng, λKₚ)
-        new.logψ̃ += logmcpotential(rng, new.twₚ, chain.Nₘ)
+        twₚ = rand(rng, λKₚ)
+        new.logψ̃ += logmcmeantwist(rng, twₚ, chain.Nₘ)
+    else # recall decomp
+        twₚ = old.twₚ₊₁
     end
    
     # function changes! new::DecompTwistVectorParticle
-    Mψx = (p == 1) ? chain[1](new) : chain[p](old) 
+    Mψx = (p == 1) ? chain[1](twₚ) : chain[p](old) 
     # chain[p] == twisted mutation/distribution at p
     # old doesn't exist at chain[1]
     # need old.twₚ₊₁, use new.twₚ instead
     
     # mutate: x
-    newx = Array{eltype(Mψx)}(undef, size(Mψx))
-    rand!(rng, Mψx, newx)
-    new.x = newx
-
-    # mutate: the current twist, just used
-    if p > 1
-        new.twₚ = old.twₚ₊₁
-    end
+    xₚ = Array{eltype(Mψx)}(undef, size(Mψx))
+    rand!(rng, Mψx, xₚ)
+    new.x = xₚ
 
     # mutate: next twist
     if p < length(chain)
-        λKₚ₊₁ = chain.λK(chain[p+1, base = true](newx), chain.ψ[p+1])
+        λKₚ₊₁ = chain.λK(chain[p+1, base = true](xₚ), chain.ψ[p+1])
         new.twₚ₊₁ = rand(rng, λKₚ₊₁)
-        new.logψ̃ += logmcpotential(rng, new.twₚ₊₁, chain.Nₘ)
+        new.logψ̃ += logmcmeantwist(rng, new.twₚ₊₁, chain.Nₘ)
     end
+
+    new.logψ̃ -= twₚ(xₚ, :log) # divide by ψₚ
 
 end
 
@@ -185,11 +176,7 @@ PathTwister.untwist(Gψ::MCDecompTwistedLogPotentials) = Gψ.G
 # needs to depend on rng in final version... (only serial for now)
 function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVectorParticle, ::Nothing)
 
-    logψₚ(x) = particle.twₚ.λ(x, :log) + particle.twₚ.β * particle.twₚ.r(x, :log)
+    return logpdf(Gψ.G.obs[p], value(particle)) + particle.logψ̃
+    # ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ) for p > 1.  For p == 1 includes M₁(ψ₁) factor also
 
-    logpot = logpdf(Gψ.G.obs[p], value(particle)) - logψₚ(value(particle))
-
-    logpot += particle.logψ̃
-
-    return logpot
 end
