@@ -7,6 +7,7 @@ using PathTwister
 using Roots
 import StatsFuns: logsumexp
 import StatsBase: countmap
+using PDMats
 
 ## Exact normalising constant
 using Kalman, GaussianDistributions
@@ -24,7 +25,8 @@ include("adaptive-temp-twist.jl")
 
 # Types: ExpTilt, TwistDecomp, DecompTemperAdaptSampler, DecompTwistVectorParticle, DecompTemperKernel, 
 # DecompTwistedMarkovChain, MCDecompTwistedLogPotentials
-include("adaptive-temp-twist-partial.jl")
+#include("adaptive-temp-twist-partial.jl")
+include("scratch-adaptive-temp-twist-partial.jl")
 
 # setup problem
 n = 20
@@ -175,7 +177,8 @@ Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ2, Nmc)
 
 Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
-Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+#Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
 
 Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*10, n, 1, true)
 
@@ -209,9 +212,9 @@ i = 20; map(s -> (s[i].J \ s[i].h, s[i].J), [bestψ, bestψ2, bestψ3])
 
 smc!(model, smcio); smcio.logZhats[end] - truelogZ
 
-
-# update new version to handle just lambda = 1
+# implement scratch?
 
 # monitor rejection sampler
 
 # recreate PhD experiments
+

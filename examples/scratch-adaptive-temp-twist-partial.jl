@@ -133,38 +133,51 @@ function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer; base:
     
 end
 
-function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle, rng, p::Int64, old::DecompTwistVectorParticle, ::Nothing) where {D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
+mutable struct DecompTwistedScratch{d, T<:AbstractTwist}
+    λK::DecompTemperAdaptSampler{T}
+    twₚ::TwistDecomp{<:Real}
+    Mψx::RejectionSampler{<:VariateForm,<:ValueSupport,T}
+    # xₚ::MVector{d,Float64} yeilds error see: https://github.com/JuliaStats/PDMats.jl/issues/173
+    xₚ::Vector{Float64}
+    function DecompTwistedScratch{d, T}() where {d, T<:AbstractTwist} 
+        scratch = new{d,T}()
+        scratch.xₚ = MVector{d,Float64}(undef)
+        return scratch
+    end
+end
+
+function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle{d}, rng, p::Int64, old::DecompTwistVectorParticle{d}, scratch::DecompTwistedScratch{d,T}) where {d, D<:Sampleable,K<:MarkovKernel,T<:AbstractTwist}
     
     new.logψ̃ = 0.0 # MC estimate of ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ) for p > 1.  For p == 1 includes M₁(ψ₁) factor also
 
     # calculate decomp (repeated per particle - inefficient for p = 1)
     if p == 1
-        λKₚ = chain.λK(chain[1, base = true], chain.ψ[1])
-        twₚ = rand(rng, λKₚ)
-        new.logψ̃ += logmcmeantwist(rng, twₚ, chain.Nₘ)
+        scratch.λK = chain.λK(chain[1, base = true], chain.ψ[1]) # λKₚ
+        scratch.twₚ = rand(rng, scratch.λK)
+        new.logψ̃ += logmcmeantwist(rng, scratch.twₚ, chain.Nₘ)
     else # recall decomp
-        twₚ = old.twₚ₊₁
+        scratch.twₚ = old.twₚ₊₁
     end
    
     # function changes! new::DecompTwistVectorParticle
-    Mψx = (p == 1) ? chain[1](twₚ) : chain[p](old) 
+    scratch.Mψx = (p == 1) ? chain[1](scratch.twₚ) : chain[p](old) 
     # chain[p] == twisted mutation/distribution at p
     # old doesn't exist at chain[1]
     # need old.twₚ₊₁, use new.twₚ instead
     
     # mutate: x
-    xₚ = Array{eltype(Mψx)}(undef, size(Mψx))
-    rand!(rng, Mψx, xₚ)
-    new.x = xₚ
+    #scratch.xₚ = Array{eltype(Mψx)}(undef, size(Mψx))
+    rand!(rng, scratch.Mψx, scratch.xₚ)
+    new.x = scratch.xₚ
 
     # mutate: next twist
     if p < length(chain)
-        λKₚ₊₁ = chain.λK(chain[p+1, base = true](xₚ), chain.ψ[p+1])
-        new.twₚ₊₁ = rand(rng, λKₚ₊₁)
+        scratch.λK = chain.λK(chain[p+1, base = true](scratch.xₚ), chain.ψ[p+1]) # λKₚ₊₁
+        new.twₚ₊₁ = rand(rng, scratch.λK)
         new.logψ̃ += logmcmeantwist(rng, new.twₚ₊₁, chain.Nₘ)
     end
 
-    new.logψ̃ -= twₚ(xₚ, :log) # divide by ψₚ
+    new.logψ̃ -= scratch.twₚ(scratch.xₚ, :log) # divide by ψₚ
 
 end
 
@@ -175,7 +188,7 @@ end
 
 PathTwister.untwist(Gψ::MCDecompTwistedLogPotentials) = Gψ.G
 
-function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVectorParticle, ::Nothing)
+function (Gψ::MCDecompTwistedLogPotentials)(p::Int64, particle::DecompTwistVectorParticle, ::DecompTwistedScratch{d,T}) where {d, T<:AbstractTwist}
 
     return logpdf(Gψ.G.obs[p], value(particle)) + particle.logψ̃
     # ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ) for p > 1.  For p == 1 includes M₁(ψ₁) factor also
