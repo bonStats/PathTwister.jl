@@ -59,7 +59,7 @@ function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::
 
         evolve!(ψs[p], h, J)
 
-        if det(ψs[p].J) <= 0.0
+        if !isposdef(ψs[p].J)
             ensure_psd_eigen!(ψs[p].J, psdscale)
         end
 
@@ -148,12 +148,12 @@ maxlassoadjust(ψ::ExpQuadTwist{R}, ϵ::Float64) where {R<:Real} = 0.5*diag(ψ.J
 
 # Symmetric -> Symmetric positive definite
 
-function ensure_psd_eigen!(X::AbstractMatrix{R}, scale::Float64) where {R<:Real}
+function ensure_psd_eigen!(X::AbstractMatrix{R}, sc::Float64) where {R<:Real}
     ei = eigen(X)
-    minpos = minimum(ei.values[ei.values .> 0.])
-    newvals = map( x -> (x < minpos) ? scale*minpos : x, ei.values)
-    X = ei.vectors * Diagonal(newvals) * ei.vectors'
+    posvals = ei.values[ei.values .> sc/100]
+    minposval = isempty(posvals) ? sc : minimum(posvals)
+    newvals = map( x -> (x < minposval) ? sc*minposval : x, ei.values)
+    X .= symmetric(ei.vectors * Diagonal(newvals) * ei.vectors', :L) # to override elements of X
+    @warn "PSD ψ correction. Number of negative eigenvalues = $(size(X,2) - length(posvals))"
 end
-
-
 

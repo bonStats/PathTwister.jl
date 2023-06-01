@@ -24,15 +24,15 @@ include("adaptive-temp-twist.jl")
 
 # Types: ExpTilt, TwistDecomp, DecompTemperAdaptSampler, DecompTwistVectorParticle, DecompTemperKernel, 
 # DecompTwistedMarkovChain, MCDecompTwistedLogPotentials
-include("adaptive-temp-twist-partial.jl")
-#include("scratch-adaptive-temp-twist-partial.jl")
+#include("adaptive-temp-twist-partial.jl")
+include("scratch-adaptive-temp-twist-partial.jl")
 
 # setup problem
-n = 20
+n = 10
 d = 2
 μ = MvNormal(SMatrix{d,d}(1.0I))
 
-A = @SMatrix [0.5 0.1; 0.1 0.5]
+A = @SMatrix [0.5^(abs(i-j)+1) for i = 1:d, j = 1:d]
 
 b = @SVector zeros(d)
 Σ = SMatrix{d,d}(1.0I)
@@ -168,13 +168,13 @@ map(s -> minimum([mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n]), [smcio�
 
 Nmc= 8
 
-DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.5), Nmc)
-Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ2, Nmc)
+DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.15), Nmc)
+Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ, Nmc)
 
 Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
-Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
-#Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
+#Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
 
 Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*10, n, 1, true)
 
@@ -186,7 +186,7 @@ Dsmcioψ.logZhats[end] .- truelogZ
 D0Mβ = TemperKernel{eltype(bestψ)}(log(0.5), Nmc)
 D0chainψ = DecompTwistedMarkovChain(μ, M, D0Mβ, n, bestψ2, Nmc)
 
-D0modelψ = SMCModel(D0chainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+D0modelψ = SMCModel(D0chainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
 
 D0smcioψ = SMCIO{D0modelψ.particle, D0modelψ.pScratch}(N*10, n, 1, true)
 
@@ -215,3 +215,21 @@ smc!(model, smcio); smcio.logZhats[end] - truelogZ
 
 # recreate PhD experiments
 
+# learned ψ decision when to set to zero? 
+# special ψ class, λ for this
+
+
+A = bestψ[10].J
+
+function ensure_psd_eigen!(X::AbstractMatrix{R}, s::Float64) where {R<:Real}
+    ei = eigen(X)
+    posvals = ei.values[ei.values .> 0.0]
+    minposval = isempty(posvals) ? s : minimum(posvals)
+    newvals = map( x -> (x < minposval) ? s*minposval : x, ei.values)
+    X .= ei.vectors * Diagonal(newvals) * ei.vectors'
+    @warn "PSD ψ correction. Number of negative eigenvalues = $(size(X,2) - length(posvals))"
+end
+
+ensure_psd_eigen!(A, 0.1)
+
+X = A

@@ -9,7 +9,7 @@ ExpQuadTwist{R}(d::Int64) where {R<:Real} = ExpQuadTwist(zeros(R,d),zeros(R,d,d)
 
 function evolve!(ψ::ExpQuadTwist{R}, h::AbstractVector{R}, J::AbstractMatrix{R}) where {R<:Real}
     ψ.h = ψ.h + h
-    ψ.J = ψ.J + J
+    ψ.J = symmetric(ψ.J + J, :L)
 end
 
 Base.iszero(ψ::ExpQuadTwist{R}) where {R<:Real} = det(ψ.J) <= 0.0

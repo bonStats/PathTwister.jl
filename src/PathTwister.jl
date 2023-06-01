@@ -5,7 +5,7 @@ using GLMNet
 
 import Random: GLOBAL_RNG, AbstractRNG
 import Distributions: Sampleable
-import LinearAlgebra: det, diag, diagind, eigen, Diagonal
+import LinearAlgebra: det, diag, diagind, eigen, Diagonal, isposdef, symmetric
 import StatsFuns: logsumexp
 import Roots: find_zero
 
