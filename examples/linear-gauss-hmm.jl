@@ -8,7 +8,7 @@ end
 # Markov Kernel #
 struct LinearGaussMarkovKernel{R<:Real} <: MarkovKernel
     A::AbstractMatrix{R}
-    b::Vector{R}
+    b::AbstractVector{R}
     Σ::AbstractMatrix{R}
 end
 

@@ -137,8 +137,7 @@ mutable struct DecompTwistedScratch{d, T<:AbstractTwist}
     λK::DecompTemperAdaptSampler{T}
     twₚ::TwistDecomp{<:Real}
     Mψx::RejectionSampler{<:VariateForm,<:ValueSupport,T}
-    # xₚ::MVector{d,Float64} yeilds error see: https://github.com/JuliaStats/PDMats.jl/issues/173
-    xₚ::Vector{Float64}
+    xₚ::MVector{d,Float64} 
     function DecompTwistedScratch{d, T}() where {d, T<:AbstractTwist} 
         scratch = new{d,T}()
         scratch.xₚ = MVector{d,Float64}(undef)

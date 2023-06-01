@@ -7,7 +7,6 @@ using PathTwister
 using Roots
 import StatsFuns: logsumexp
 import StatsBase: countmap
-using PDMats
 
 ## Exact normalising constant
 using Kalman, GaussianDistributions
@@ -25,21 +24,18 @@ include("adaptive-temp-twist.jl")
 
 # Types: ExpTilt, TwistDecomp, DecompTemperAdaptSampler, DecompTwistVectorParticle, DecompTemperKernel, 
 # DecompTwistedMarkovChain, MCDecompTwistedLogPotentials
-#include("adaptive-temp-twist-partial.jl")
-include("scratch-adaptive-temp-twist-partial.jl")
+include("adaptive-temp-twist-partial.jl")
+#include("scratch-adaptive-temp-twist-partial.jl")
 
 # setup problem
 n = 20
 d = 2
-μ = MvNormal(d, 1.)
+μ = MvNormal(SMatrix{d,d}(1.0I))
 
-A = zeros(d,d)
-A[diagind(A)] .= 0.5
-A[diagind(A,-1)] .= 0.1
-A[diagind(A,1)] .= 0.1
+A = @SMatrix [0.5 0.1; 0.1 0.5]
 
-b = zeros(d)
-Σ = Matrix(1.0*I, d, d)
+b = @SVector zeros(d)
+Σ = SMatrix{d,d}(1.0I)
 M = LinearGaussMarkovKernel(A,b,Σ)
 
 #chain = MarkovChain(μ, repeat([M], n-1))
@@ -177,12 +173,12 @@ Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ2, Nmc)
 
 Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
-#Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
-Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
+Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
+#Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
 
 Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*10, n, 1, true)
 
-smc!(Dmodelψ, Dsmcioψ)
+@time smc!(Dmodelψ, Dsmcioψ)
 
 Dsmcioψ.logZhats[end] .- truelogZ
 
@@ -212,9 +208,10 @@ i = 20; map(s -> (s[i].J \ s[i].h, s[i].J), [bestψ, bestψ2, bestψ3])
 
 smc!(model, smcio); smcio.logZhats[end] - truelogZ
 
-# implement scratch?
+# test scratch: change matrics to static
+# change components to static matrices/vectors
 
-# monitor rejection sampler
+# monitor rejection sampler (alter return type)
 
 # recreate PhD experiments
 
