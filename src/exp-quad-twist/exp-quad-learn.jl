@@ -3,7 +3,7 @@
 
 # note untwist == identity by default
 
-function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
+function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02, psdscale::Float64 = 1e-01) where {R<:Real, P<:AbstractParticle, S}
     # TD: how to check if smc!(smcio, model) has been run?
     # TD: Investigate if need scratch for extra particles
     if !smcio.fullOutput
@@ -58,6 +58,10 @@ function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::
         h, J = pathcv_hJ(learntwistlassocv(X, y, parids, folds, maxlassoadjust(ψs[p], abs(quadϵ))), parids)
 
         evolve!(ψs[p], h, J)
+
+        if det(ψs[p].J) <= 0.0
+            ensure_psd_eigen!(ψs[p].J, psdscale)
+        end
 
     end
 end
@@ -141,6 +145,15 @@ end
 # on quadratic diagonal terms from lassocv
 maxlassoadjust(ψ::ExpQuadTwist{R}, ϵ::Float64) where {R<:Real} = 0.5*diag(ψ.J) .- ϵ
 
+
+# Symmetric -> Symmetric positive definite
+
+function ensure_psd_eigen!(X::AbstractMatrix{R}, scale::Float64) where {R<:Real}
+    ei = eigen(X)
+    minpos = minimum(ei.values[ei.values .> 0.])
+    newvals = map( x -> (x < minpos) ? scale*minpos : x, ei.values)
+    X = ei.vectors * Diagonal(newvals) * ei.vectors'
+end
 
 
 
