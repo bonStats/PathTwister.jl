@@ -3,7 +3,7 @@
 
 # note untwist == identity by default
 
-function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02, psdscale::Float64 = 1e-01) where {R<:Real, P<:AbstractParticle, S}
+function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02, psdscale::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
     # TD: how to check if smc!(smcio, model) has been run?
     # TD: Investigate if need scratch for extra particles
     if !smcio.fullOutput
@@ -60,7 +60,8 @@ function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::
         evolve!(ψs[p], h, J)
 
         if !isposdef(ψs[p].J)
-            ensure_psd_eigen!(ψs[p].J, psdscale)
+            ensure_psd_eigen!(ψs[p].J, abs(psdscale))
+            refit_linear!(ψs[p], X, y, parids, folds)
         end
 
     end
@@ -148,12 +149,22 @@ maxlassoadjust(ψ::ExpQuadTwist{R}, ϵ::Float64) where {R<:Real} = 0.5*diag(ψ.J
 
 # Symmetric -> Symmetric positive definite
 
-function ensure_psd_eigen!(X::AbstractMatrix{R}, sc::Float64) where {R<:Real}
-    ei = eigen(X)
-    posvals = ei.values[ei.values .> sc/100]
-    minposval = isempty(posvals) ? sc : minimum(posvals)
-    newvals = map( x -> (x < minposval) ? sc*minposval : x, ei.values)
-    X .= symmetric(ei.vectors * Diagonal(newvals) * ei.vectors', :L) # to override elements of X
-    @warn "PSD ψ correction. Number of negative eigenvalues = $(size(X,2) - length(posvals))"
+function ensure_psd_eigen!(J::AbstractMatrix{R}, sc::Float64) where {R<:Real}
+    ei = eigen(J)
+    newvals = map( x -> (x < sc) ? sc : x, ei.values)
+    # https://nhigham.com/2021/01/26/what-is-the-nearest-positive-semidefinite-matrix/
+    J .= symmetric(ei.vectors * Diagonal(newvals) * ei.vectors', :L) # to override elements of X
+    @warn "PSD ψ correction. Number of shifted eigenvalues = $(size(J,2) - sum(ei.values .< sc))"
 end
 
+function refit_linear!(ψ::ExpQuadTwist{R}, X::AbstractMatrix{R}, y::AbstractVector{R}, parids::Dict{Symbol, UnitRange{Int64}}, folds::Union{AbstractVector{Int64}, Int64}) where {R<:Real}
+    ψ.h .= 0.0
+    Xlin = X[:, parids[:linear]] # @views?
+    res = y .- ψ(Xlin', :log)
+    if isa(folds, AbstractVector)
+        fitlin = glmnetcv(Xlin, res, folds = folds)
+    else isa(folds, Integer)
+        fitlin = glmnetcv(Xlin, res, nfolds = folds)
+    end
+    ψ.h .= coef(fitlin)
+end

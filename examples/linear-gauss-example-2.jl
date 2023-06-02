@@ -28,11 +28,11 @@ include("adaptive-temp-twist.jl")
 include("scratch-adaptive-temp-twist-partial.jl")
 
 # setup problem
-n = 10
-d = 2
+n = 200
+d = 3
 μ = MvNormal(SMatrix{d,d}(1.0I))
 
-A = @SMatrix [0.5^(abs(i-j)+1) for i = 1:d, j = 1:d]
+A = @SMatrix [0.42^(abs(i-j)+1) for i = 1:d, j = 1:d]
 
 b = @SVector zeros(d)
 Σ = SMatrix{d,d}(1.0I)
@@ -75,12 +75,12 @@ smc!(model, smcio)
 
 bestψ = [ExpQuadTwist{Float64}(d) for _ in 1:model.maxn]
 
-lassocvtwist!(bestψ, smcio, model, 4, cvstrategy = 8)
+lassocvtwist!(bestψ, smcio, model, 8, cvstrategy = 4)
 
 
 # locally twisted SMC
 
-Mβ = TemperTwist(log(0.15), Nmc)
+Mβ = TemperTwist(log(0.05), Nmc)
 chainψ = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ)
 
 potentialψ = MCTwistedLogPotentials(potential, chain, bestψ, Nmc)
@@ -124,14 +124,14 @@ SequentialMonteCarlo.V(smcioψ, (x) -> 1, true, false, n)
 
 bestψ2 = deepcopy(bestψ)
 
-lassocvtwist!(bestψ2, smcioψ, modelψ, 4, cvstrategy = 8)
+lassocvtwist!(bestψ2, smcioψ, modelψ, 8, cvstrategy = 4)
 
 
 chainψ2 = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ2)
 potentialψ2 = MCTwistedLogPotentials(potential, chain, bestψ2, Nmc)
 
 modelψ2 = SMCModel(chainψ2, potentialψ2, n, TTVectorParticle{d}, Nothing)
-smcioψ2 = SMCIO{modelψ.particle, modelψ.pScratch}(N ÷ 8, n, 1, true)
+smcioψ2 = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
 
 smc!(modelψ2, smcioψ2)
 
@@ -139,13 +139,13 @@ smcioψ2.logZhats[end] - truelogZ
 
 bestψ3 = deepcopy(bestψ2)
 
-lassocvtwist!(bestψ3, smcioψ2, modelψ2, 4, cvstrategy = 8)
+lassocvtwist!(bestψ3, smcioψ2, modelψ2, 4, cvstrategy = 4)
 
 chainψ3 = AdaptiveTwistedMarkovChain(μ, M, Mβ, n, bestψ3)
 potentialψ3 = MCTwistedLogPotentials(potential, chain, bestψ2, Nmc)
 
 modelψ3 = SMCModel(chainψ3, potentialψ3, n, TTVectorParticle{d}, Nothing)
-smcioψ3 = SMCIO{modelψ.particle, modelψ.pScratch}(N ÷ 8, n, 1, true)
+smcioψ3 = SMCIO{modelψ.particle, modelψ.pScratch}(N, n, 1, true)
 
 smc!(modelψ3, smcioψ3)
 
@@ -168,22 +168,22 @@ map(s -> minimum([mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n]), [smcio�
 
 Nmc= 8
 
-DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.15), Nmc)
-Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ, Nmc)
+DMβ = DecompTemperKernel{eltype(bestψ)}(log(0.05), Nmc)
+Dchainψ = DecompTwistedMarkovChain(μ, M, DMβ, n, bestψ3, Nmc)
 
 Dpotentialψ = MCDecompTwistedLogPotentials(potential)
 
 #Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, Nothing)
 Dmodelψ = SMCModel(Dchainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
 
-Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N*10, n, 1, true)
+Dsmcioψ = SMCIO{Dmodelψ.particle, Dmodelψ.pScratch}(N, n, 1, true)
 
 @time smc!(Dmodelψ, Dsmcioψ)
 
 Dsmcioψ.logZhats[end] .- truelogZ
 
 
-D0Mβ = TemperKernel{eltype(bestψ)}(log(0.5), Nmc)
+D0Mβ = TemperKernel{eltype(bestψ)}(log(0.05), Nmc)
 D0chainψ = DecompTwistedMarkovChain(μ, M, D0Mβ, n, bestψ2, Nmc)
 
 D0modelψ = SMCModel(D0chainψ, Dpotentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(bestψ)})
@@ -233,3 +233,11 @@ end
 ensure_psd_eigen!(A, 0.1)
 
 X = A
+
+
+X = LinearAlgebra.symmetric(rand(3,3), :L)
+
+ei = eigen(X)
+ei.values[1] = 0.0
+
+(ei.vectors * Diagonal(ei.values) * ei.vectors' - X ) ./ X
