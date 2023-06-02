@@ -165,6 +165,15 @@ map(s -> SequentialMonteCarlo.V(s, x -> 1, true, false, n),
 map(s -> minimum([mean(getfield.(s.allZetas[i], :β₁)) for i in 1:n]), [smcioψ, smcioψ2, smcioψ3])
 
 
+# partial twist not working in higher dimensions e.g. d = 10
+# the code ot find λ may be unstable, or the J matrices ill-conditioned
+# despite ensuring that they are Positive Def
+
+# Other options include:
+# - Regularise λ learning process
+# - Allowing for just Pos Semi Def, defined on subspace of domain
+# - Change ψ to alt form with max 1 (solve λ alternatively... approx ψ with quad first)
+# - Just use diagonal version of J for quad ψ
 
 Nmc= 8
 
@@ -241,3 +250,20 @@ ei = eigen(X)
 ei.values[1] = 0.0
 
 (ei.vectors * Diagonal(ei.values) * ei.vectors' - X ) ./ X
+
+
+
+A = rand(3,3)
+A = A' * A
+
+D = sqrt.(Diagonal(A))
+
+D \ A / D
+
+A / Diagonal(A)
+
+# precision matrix has decomposition A = √D Q √D Where Q is partial correlation matrix
+# (1) estimate D by considering x'Dx + b x, D diagonal
+# (2) estimate Q,b by considering (x'√D⁻¹) Q (√D⁻¹x) + b x with [0,1] constraints on Q
+
+# then look into stability of λ
