@@ -24,6 +24,7 @@ end
 
 #J
 prec(emvn::EigenMvNormalCanon{R}) where {R<:Real} = evectors(emvn) * Diagonal(evalues(emvn)) * evectors(emvn)'
+#h 
 linear(emvn::EigenMvNormalCanon{R}) where {R<:Real} = emvn.h
 
 """
@@ -32,34 +33,26 @@ linear(emvn::EigenMvNormalCanon{R}) where {R<:Real} = emvn.h
 x = linear predictors
 y = response
 """
-function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, quad::Union{AbstractVector{R}, Nothing}, cross::Union{AbstractVector{R}, Nothing}, ϵ::Float64=1e-04) where {R<:Real}
+function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::AbstractVector{Int64}, iter::Int64, ϵ::Float64=1e-04) where {R<:Real}
+    
+    d = size(x, 2)
+    emvn = EigenMvNormalCanon{R}(d)
 
-    if isnothing(quad)
-        quadlower = zero(x[1,:]) .+ ϵ
-    else
-        quadlower = -quad .+ ϵ
+    # scratch space for regression setup (linear unchanged, quad and cross change)
+    X = zeros(m, d*(d-1)÷2 + 2*d)
+    lincols = 1:d
+    quadcols = (d+1):(2*d)
+    crosscols = (2*d+1):size(X,2)
+
+    # set linear
+    X[:,lincols] = x
+
+    for _ in 1:iter
+        learn_mvcanon_cvnet_eigen!(emvn, X, quadcols, lincols, y, folds, ϵ, alpha)
+        learn_mvcanon_cvnet_pcor!(emvn, X, crosscols, lincols, y, folds, ϵ, alpha)
     end
 
-    # n = size(x,1)
-    d = size(x,2)
-    qX = -0.5 .* (x .^ 2)
-    qcon = [[quadlower repeat([Inf], d)]' repeat([-Inf; Inf], 1, d)]
-    # assume aᵢⱼ = 0
-    qres = glmnetcv([qX x], y, folds = folds, constraints = qcon, alpha = 0.0)
-    qcoef = coef(qres)[1:d]
-
-    # scaled -∑aᵢⱼxᵢxⱼ1(i<j) * √ aᵢᵢ aⱼⱼ # CHECK THIS
-    cX = [ - x[:,cc[1]] .* x[:,cc[2]] .* sqrt(qcoef[cc[1]] * qcoef[cc[2]]) for (_, cc) in uppertriiter(d)]
-    dc = size(cX, 2)
-
-    if isnothing(cross)
-        cbounds = repeat([-1; 1], 1, dc)
-    else
-        cbounds = [cross cross]'
-    end
-
-    ccon = [ repeat([-Inf; Inf], 1, dc)]
-    res = glmnetcv([cX x], y, folds = folds, constraints = ccon, alpha = 1.0)
+    return emvn
 end
 
 # Problem:
@@ -77,27 +70,30 @@ end
 # In (ii) components of Λ are linear for regression. With simple constraints Λᵢᵢ > 0, Λᵢⱼ = 0.
 # simply iterate between two regressions
 
-function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, linX::AbstractMatrix{R}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
+function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, quadXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
     
+    quadX = @view X[:,quadXcols]
+    linX = @view X[:,linXcols]
     d = size(linX, 2)
     
-    # scaled X (linear only)
-    X = linX * evectors(emvn)
+    # scaled X (linear only, used as scratch)
+    quadX .= linX * evectors(emvn)
 
     # -xᵢ' J xᵢ / 2 + h'xᵢ (X contains evectors)
-    logψx = [-dot(x .* evalues(emvn), x)/2 + dot(emvn.h, linX[i,:]) for (i, x) in enumerate(eachrow(X))]
+    logψx = [-dot(x .* evalues(emvn), x)/2 + dot(emvn.h, linX[i,:]) for (i, x) in enumerate(eachrow(quadX))]
     
     # residual y
     y = yf - logψx
 
     # full X
-    X = [-(X .^2) ./ 2 linX]
+    quadX .= -(quadX .^2) ./ 2
+    fullX = @view X[:, union(quadXcols,linXcols)]
 
     constraints = repeat([-Inf; Inf], 1, 2*d)
     constraints[1,1:d] = - evalues(emvn) .+ ϵ
 
     # run (warning: scales constraints)
-    res = glmnetcv(X, y, folds = folds, constraints = constraints, alpha = alpha)
+    res = glmnetcv(fullX, y, folds = folds, constraints = constraints, alpha = alpha)
 
     emvn.J = Eigen(emvn.J.values + coef(res)[1:d], emvn.J.vectors)
     emvn.h = emvn.h + coef(res)[(d+1):end]
@@ -107,8 +103,10 @@ function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, linX::AbstractM
 end
 
 
-function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, crossX::AbstractMatrix{R}, linX::AbstractMatrix{R}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
+function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, crossXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
     
+    crossX = @view X[:,crossXcols]
+    linX = @view X[:,linXcols]
     d = size(linX, 2)
     
     # -xᵢ' J xᵢ / 2 + h'xᵢ
@@ -120,10 +118,10 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, crossX::Abstract
 
     # scaled X (cross only) 
     σvals = σvalues(emvn)
-    crossX .= hcat([linX[:,cc[1]] .* linX[:,cc[2]] .* (σvals[cc[1]] * σvals[cc[2]]) for (_, cc) in uppertriiter(d)]...)
+    crossX .= -hcat([linX[:,cc[1]] .* linX[:,cc[2]] .* (σvals[cc[1]] * σvals[cc[2]]) for (_, cc) in uppertriiter(d)]...)
     
     # full X
-    X = [-crossX linX]
+    fullX = @view X[:, union(crossXcols,linXcols)]
 
     ρvecs = ρvectors(emvn, σvals)
     linconstraints = repeat([-Inf; Inf], 1, d)
@@ -131,7 +129,7 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, crossX::Abstract
     constraints = [crossconstraints linconstraints]
 
     # run (warning: scales constraints)
-    res = glmnetcv(X, y, folds = folds, constraints = constraints, alpha = alpha)
+    res = glmnetcv(fullX, y, folds = folds, constraints = constraints, alpha = alpha)
 
     J = zeros(d,d)
     J[diagind(J)] = σvals .^2
@@ -139,7 +137,7 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, crossX::Abstract
         J[cc] = J[reverse(cc)] = (coef(res)[i] + ρvecs[cc]) * σvals[cc[1]] * σvals[cc[2]]
     end
     
-    emvn.J = eigen(J)
+    emvn.J = eigen!(J) # mutates J
     emvn.h = emvn.h + coef(res)[(size(crossX,2)+1):end]
 
     @assert all(emvn.J.values .> 0.0)
@@ -160,7 +158,9 @@ Base.reverse(cc::CartesianIndex) = CartesianIndex(cc[2], cc[1])
 # using GLMNet
 # m = 1000
 # d = 3
-# linX = rand(m,d)
+# X = zeros(m, d*(d-1)÷2 + 2*d)
+# linX = @view X[:,(end-d+1):end]
+# linX .= rand(m,d)
 
 # quad = [1., 2., 0.5]
 
@@ -172,15 +172,14 @@ Base.reverse(cc::CartesianIndex) = CartesianIndex(cc[2], cc[1])
 # alpha = 1.0
 # folds = rand(Categorical(4), m)
 
-# X = zeros(m, d*(d-1)÷2 + 2*d)
 
-# linX = @view X[:,(end-d+1):end]
-# crossX = @view X[:,(d+1):(end-d)]
+# learn_mvcanon_cvnet_eigen!(emvn, X, 1:3, 7:9, yf, folds, ϵ, alpha)
+# learn_mvcanon_cvnet_pcor!(emvn, X, 4:6, 7:9, yf, folds, ϵ, alpha)
 
-# XX = @view [crossX linX]
+# prec(emvn)
+# linear(emvn)
 
-learn_mvcanon_cvnet_eigen!(emvn, linX, yf, folds, ϵ, alpha)
-learn_mvcanon_cvnet_pcor!(emvn, crossX, linX, yf, folds, ϵ, alpha)
 
-prec(emvn)
-linear(emvn)
+# res = learn_mvcanon_cvnet(linX, yf, folds, 2)
+# prec(res)
+# linear(res)
