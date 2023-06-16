@@ -1,6 +1,6 @@
 # NOTE: constraints argument only accepts lower < 0 and upper > 0
 # therefore, better to start with EigenMvNormalCanon as I
-# also constraints are overriddem
+# also constraints are overridden
 
 mutable struct EigenMvNormalCanon{R<:Real}
     J::Eigen{R, R, Matrix{R}, Vector{R}}
