@@ -33,7 +33,7 @@ linear(emvn::EigenMvNormalCanon{R}) where {R<:Real} = emvn.h
 x = linear predictors
 y = response
 """
-function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::AbstractVector{Int64}, iter::Int64, ϵ::Float64=1e-04) where {R<:Real}
+function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::AbstractVector{Int64}, iter::Int64, diagϵ::Float64=1e-02, corrϵ::Float64=1e-01; alpha::Float64 = 1.0) where {R<:Real}
     
     d = size(x, 2)
     emvn = EigenMvNormalCanon{R}(d)
@@ -47,9 +47,12 @@ function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::
     # set linear
     X[:,lincols] = x
 
+    # initialise diagonal
+    learn_mvcanon_cvnet_eigen!(emvn, X, quadcols, lincols, y, folds, diagϵ, alpha)
+
     for _ in 1:iter
-        learn_mvcanon_cvnet_eigen!(emvn, X, quadcols, lincols, y, folds, ϵ, alpha)
-        learn_mvcanon_cvnet_pcor!(emvn, X, crosscols, lincols, y, folds, ϵ, alpha)
+        learn_mvcanon_cvnet_pcor!(emvn, X, crosscols, lincols, y, folds, diagϵ, corrϵ, alpha)
+        learn_mvcanon_cvnet_eigen!(emvn, X, quadcols, lincols, y, folds, diagϵ, alpha)
     end
 
     return emvn
@@ -70,7 +73,7 @@ end
 # In (ii) components of Λ are linear for regression. With simple constraints Λᵢᵢ > 0, Λᵢⱼ = 0.
 # simply iterate between two regressions
 
-function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, quadXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
+function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, quadXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64, alpha::Float64) where {R<:Real}
     
     quadX = @view X[:,quadXcols]
     linX = @view X[:,linXcols]
@@ -103,7 +106,7 @@ function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatr
 end
 
 
-function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, crossXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64=1e-04, alpha::Float64 = 0.0) where {R<:Real}
+function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, crossXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, evϵ::Float64, corrϵ::Float64, alpha::Float64) where {R<:Real}
     
     crossX = @view X[:,crossXcols]
     linX = @view X[:,linXcols]
@@ -125,7 +128,7 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatri
 
     ρvecs = ρvectors(emvn, σvals)
     linconstraints = repeat([-Inf; Inf], 1, d)
-    crossconstraints = hcat([[-1;1] .- ρvecs[cc[1],cc[2]] for (_, cc) in uppertriiter(d)]...)
+    crossconstraints = hcat([[-1+corrϵ;1-corrϵ] .- ρvecs[cc[1],cc[2]] for (_, cc) in uppertriiter(d)]...)
     constraints = [crossconstraints linconstraints]
 
     # run (warning: scales constraints)
@@ -136,11 +139,14 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatri
     for (i, cc) in uppertriiter(d)
         J[cc] = J[reverse(cc)] = (coef(res)[i] + ρvecs[cc]) * σvals[cc[1]] * σvals[cc[2]]
     end
-    
+    J = Symmetric(J)
+
     emvn.J = eigen!(J) # mutates J
     emvn.h = emvn.h + coef(res)[(size(crossX,2)+1):end]
 
-    @assert all(emvn.J.values .> 0.0)
+    if any(emvn.J.values .<= 0.0) # correction to keep numerically positive definite.
+        emvn.J = Eigen( max.(evalues(emvn), evϵ), evectors(emvn))
+    end
 
 end
 
@@ -156,30 +162,14 @@ Base.reverse(cc::CartesianIndex) = CartesianIndex(cc[2], cc[1])
 
 # using Distributions
 # using GLMNet
-# m = 1000
-# d = 3
-# X = zeros(m, d*(d-1)÷2 + 2*d)
-# linX = @view X[:,(end-d+1):end]
-# linX .= rand(m,d)
+# m = 2000
+# d = 25
+# linX = rand(m,d)
 
 # quad = [1., 2., 0.5]
-
 # yf = linX[:,1] .- (0.5 * quad[1] * linX[:,1] .^2) .- (0.5 * quad[2] * linX[:,2].^2) .- (0.5 * quad[3] * linX[:,3] .^2) .- 0.9*(linX[:,1] .* linX[:,2]) .+ rand(Normal(0.0,0.1), m)
+# folds = rand(Categorical(6), m)
 
-# emvn = EigenMvNormalCanon{Float64}(d)
-
-# ϵ = 1e-04
-# alpha = 1.0
-# folds = rand(Categorical(4), m)
-
-
-# learn_mvcanon_cvnet_eigen!(emvn, X, 1:3, 7:9, yf, folds, ϵ, alpha)
-# learn_mvcanon_cvnet_pcor!(emvn, X, 4:6, 7:9, yf, folds, ϵ, alpha)
-
-# prec(emvn)
-# linear(emvn)
-
-
-# res = learn_mvcanon_cvnet(linX, yf, folds, 2)
+# res = learn_mvcanon_cvnet(linX, yf, folds, 1, alpha = 1.0)
 # prec(res)
 # linear(res)
