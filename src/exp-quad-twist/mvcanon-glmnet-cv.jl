@@ -58,6 +58,10 @@ function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::
     return emvn
 end
 
+# auto dispatch for folds::Int64 and folds::Vector
+_glmnetcv(X::AbstractMatrix, y::Vector, folds::Int64, constraints::AbstractMatrix, alpha::Float64) = glmnetcv(X, y, nfolds = folds, constraints = constraints, alpha = alpha)
+_glmnetcv(X::AbstractMatrix, y::Vector, folds::AbstractVector{Int64}, constraints::AbstractMatrix, alpha::Float64) = glmnetcv(X, y, folds = folds, constraints = constraints, alpha = alpha)
+
 # Problem:
 # y ~ -0.5(x-μ)ᵀP(x-μ) = -0.5xᵀPx + xᵀPμ = -0.5xᵀJx + xᵀh + c
 # y ~ -0.5∑aᵢᵢxᵢ² -∑aᵢⱼxᵢxⱼ1(i<j) + ∑bᵢxᵢ
@@ -73,7 +77,7 @@ end
 # In (ii) components of Λ are linear for regression. With simple constraints Λᵢᵢ > 0, Λᵢⱼ = 0.
 # simply iterate between two regressions
 
-function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, quadXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, ϵ::Float64, alpha::Float64) where {R<:Real}
+function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, quadXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds::Union{AbstractVector{Int64}, Int64}, ϵ::Float64, alpha::Float64) where {R<:Real}
     
     quadX = @view X[:,quadXcols]
     linX = @view X[:,linXcols]
@@ -96,7 +100,7 @@ function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatr
     constraints[1,1:d] = - evalues(emvn) .+ ϵ
 
     # run (warning: scales constraints)
-    res = glmnetcv(fullX, y, folds = folds, constraints = constraints, alpha = alpha)
+    res = _glmnetcv(fullX, y, folds, constraints, alpha)
 
     emvn.J = Eigen(emvn.J.values + coef(res)[1:d], emvn.J.vectors)
     emvn.h = emvn.h + coef(res)[(d+1):end]
@@ -106,7 +110,7 @@ function learn_mvcanon_cvnet_eigen!(emvn::EigenMvNormalCanon{R}, X::AbstractMatr
 end
 
 
-function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, crossXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds, evϵ::Float64, corrϵ::Float64, alpha::Float64) where {R<:Real}
+function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatrix{R}, crossXcols::UnitRange{Int64}, linXcols::UnitRange{Int64}, yf::AbstractVector{R}, folds::Union{AbstractVector{Int64}, Int64}, evϵ::Float64, corrϵ::Float64, alpha::Float64) where {R<:Real}
     
     crossX = @view X[:,crossXcols]
     linX = @view X[:,linXcols]
@@ -132,7 +136,7 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatri
     constraints = [crossconstraints linconstraints]
 
     # run (warning: scales constraints)
-    res = glmnetcv(fullX, y, folds = folds, constraints = constraints, alpha = alpha)
+    res = _glmnetcv(fullX, y, folds, constraints, alpha)
 
     J = zeros(d,d)
     J[diagind(J)] = σvals .^2
@@ -146,6 +150,8 @@ function learn_mvcanon_cvnet_pcor!(emvn::EigenMvNormalCanon{R}, X::AbstractMatri
 
     if any(emvn.J.values .<= 0.0) # correction to keep numerically positive definite.
         emvn.J = Eigen( max.(evalues(emvn), evϵ), evectors(emvn))
+        # This projection is the closest...
+        # https://nhigham.com/2021/01/26/what-is-the-nearest-positive-semidefinite-matrix/
     end
 
 end
