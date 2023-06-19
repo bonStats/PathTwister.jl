@@ -1,3 +1,6 @@
+# test with smaller n, check still working, up number of particles
+# check auto partial code with new expquad
+
 using SequentialMonteCarlo
 using Distributions
 using LinearAlgebra
@@ -122,7 +125,7 @@ smcioψflat.logZhats[end]
 SequentialMonteCarlo.V(smcio, (x) -> 1, true, false, n)
 SequentialMonteCarlo.V(smcioψ, (x) -> 1, true, false, n)
 
-bestψ2 = deepcopy(bestψ)
+bestψ2 = copy(bestψ)
 
 lassocvtwist!(bestψ2, smcioψ, modelψ, 8, cvstrategy = 4)
 
@@ -264,6 +267,6 @@ A / Diagonal(A)
 
 # precision matrix has decomposition A = √D Q √D Where Q is partial correlation matrix
 # (1) estimate D by considering x'Dx + b x, D diagonal
-# (2) estimate Q,b by considering (x'√D⁻¹) Q (√D⁻¹x) + b x with [0,1] constraints on Q
+# (2) estimate Q,b by considering (x'√D⁻¹) Q (√D⁻¹x) + b x with [-1,1] constraints on Q
 
 # then look into stability of λ

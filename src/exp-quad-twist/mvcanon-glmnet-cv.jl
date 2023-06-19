@@ -23,7 +23,7 @@ end
 ρvectors(emvn::EigenMvNormalCanon{R}) where {R<:Real} = ρvectors(emvn, σvalues(emvn))
 
 #J
-prec(emvn::EigenMvNormalCanon{R}) where {R<:Real} = evectors(emvn) * Diagonal(evalues(emvn)) * evectors(emvn)'
+prec(emvn::EigenMvNormalCanon{R}) where {R<:Real} = Symmetric(Matrix(emvn.J))
 #h 
 linear(emvn::EigenMvNormalCanon{R}) where {R<:Real} = emvn.h
 
@@ -32,17 +32,20 @@ linear(emvn::EigenMvNormalCanon{R}) where {R<:Real} = emvn.h
 
 x = linear predictors
 y = response
+
 """
-function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::AbstractVector{Int64}, iter::Int64, diagϵ::Float64=1e-02, corrϵ::Float64=1e-01; alpha::Float64 = 1.0) where {R<:Real}
-    
-    d = size(x, 2)
-    emvn = EigenMvNormalCanon{R}(d)
+function learn_mvcanon_cvnet!(emvn::EigenMvNormalCanon{R}, x::AbstractMatrix{R}, y::AbstractVector{R}, folds::Union{AbstractVector{Int64}, Int64}, iter::Int64, diagϵ::Float64=1e-02, corrϵ::Float64=1e-01; alpha::Float64 = 1.0) where {R<:Real}
+
+    m = size(x,1)
+    d = size(x,2)
+    @assert m == length(y)
 
     # scratch space for regression setup (linear unchanged, quad and cross change)
     X = zeros(m, d*(d-1)÷2 + 2*d)
     lincols = 1:d
     quadcols = (d+1):(2*d)
     crosscols = (2*d+1):size(X,2)
+    # NOTE: move to explicitly set this within learning to reduce allocations
 
     # set linear
     X[:,lincols] = x
@@ -55,6 +58,13 @@ function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::
         learn_mvcanon_cvnet_eigen!(emvn, X, quadcols, lincols, y, folds, diagϵ, alpha)
     end
 
+    return emvn
+end
+
+function learn_mvcanon_cvnet(x::AbstractMatrix{R}, y::AbstractVector{R}, folds::Union{AbstractVector{Int64}, Int64}, iter::Int64, diagϵ::Float64=1e-02, corrϵ::Float64=1e-01; alpha::Float64 = 1.0) where {R<:Real}
+    d = size(x, 2)
+    emvn = EigenMvNormalCanon{R}(d)
+    learn_mvcanon_cvnet!(emvn, x, y, folds, iter, diagϵ, corrϵ, alpha = alpha)
     return emvn
 end
 
