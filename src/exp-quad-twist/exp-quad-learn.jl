@@ -3,7 +3,7 @@
 
 # note untwist == identity by default
 
-function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, quadϵ::Float64 = 1e-02, psdscale::Float64 = 1e-02) where {R<:Real, P<:AbstractParticle, S}
+function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::SMCModel, MCreps::Int64; cvstrategy::Union{Symbol, Int64} = :byreps, iter::Int64 = 2, diagϵ::Float64=1e-02, corrϵ::Float64=1e-01, netα::Float64=1.0) where {R<:Real, P<:AbstractParticle, S}
     # TD: how to check if smc!(smcio, model) has been run?
     # TD: Investigate if need scratch for extra particles
     if !smcio.fullOutput
@@ -57,10 +57,10 @@ function lassocvtwist!(ψs::Vector{ExpQuadTwist{R}}, smcio::SMCIO{P, S}, model::
         end
 
         if iszero(ψs[p])
-            envm = learn_mvcanon_cvnet(Xlin, y, folds, 2; alpha = 1.0)
+            envm = learn_mvcanon_cvnet(Xlin, y, folds, iter, diagϵ, corrϵ; alpha = netα)
         else
             envm = EigenMvNormalCanon(ψs[p])
-            learn_mvcanon_cvnet!(envm, Xlin, y, folds, 2; alpha = 1.0)
+            learn_mvcanon_cvnet!(envm, Xlin, y, folds, iter, diagϵ, corrϵ; alpha = netα)
         end
 
         ψs[p] = ExpQuadTwist(envm)
