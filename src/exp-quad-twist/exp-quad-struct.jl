@@ -6,18 +6,18 @@ mutable struct ExpQuadTwist{R<:Real} <: AbstractTwist
     ℓmax::Float64 # maximum value (log scale)
 end
 
+unnormalisedmax(h::AbstractVector{R}, eJ::Eigen{R, R, Matrix{R}, Vector{R}}) where {R<:Real} = 0.5 * h' * inv(eJ) * h
+
 # initialise with eigen
 function ExpQuadTwist(h::AbstractVector{R}, eJ::Eigen{R, R, Matrix{R}, Vector{R}}) where {R<:Real}
     J = Symmetric(Matrix(eJ))
-    ℓmax = 0.5 * h' * inv(eJ) * h
-    ExpQuadTwist(h, J, eJ, ℓmax)
+    ExpQuadTwist(h, J, eJ, unnormalisedmax(h, eJ))
 end
 
 # initialise with precision
 function ExpQuadTwist(h::AbstractVector{R}, J::AbstractMatrix{R}) where {R<:Real}
     eJ = eigen(J)
-    ℓmax = 0.5 * h' * inv(eJ) * h
-    ExpQuadTwist(h, J, eJ, ℓmax)
+    ExpQuadTwist(h, J, eJ, unnormalisedmax(h, eJ))
 end
 
 ExpQuadTwist{R}(d::Int64) where {R<:Real} = ExpQuadTwist(zeros(R,d), zeros(R,d,d), eigen(zeros(R,d,d)), zero(R))
@@ -27,7 +27,7 @@ function evolve!(ψ::ExpQuadTwist{R}, h::AbstractVector{R}, J::AbstractMatrix{R}
     ψ.h = ψ.h + h
     ψ.J = Symmetric(ψ.J + J)
     ψ.eJ = eigen(ψ.J)
-    ψ.ℓmax = 0.5 * ψ.h' * inv(ψ.eJ) * ψ.h
+    ψ.ℓmax = unnormalisedmax(ψ.h, ψ.eJ)
 end
 
 Base.iszero(ψ::ExpQuadTwist{R}) where {R<:Real} = det(ψ.eJ) <= 0.0

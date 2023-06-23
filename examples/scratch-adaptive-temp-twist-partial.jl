@@ -16,9 +16,23 @@ function (λ::ExpTilt{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real
     end
 end
 
-tilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ + d.Σ*λ.h, d.Σ)
 
-Base.:/(ψ::ExpQuadTwist{R}, λ::ExpTilt{R}) where {R<:Real} = ExpQuadTwist(ψ.h - λ.h, ψ.J)
+function (λ::ExpTilt{R})(X::AbstractMatrix{R}, outscale::Symbol) where {R<:Real}
+    ℓvals = [x' * λ.h for x in eachcol(X)]
+    if outscale == :log
+        return ℓvals
+    else
+        @warn "Returning on standard scale, logscale[1] = $ℓpdf[1]"
+        exp.(ℓvals)
+    end
+end
+
+
+
+tilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ + d.Σ*λ.h, d.Σ)
+untilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ - d.Σ*λ.h, d.Σ)
+
+Base.:/(ψ::ExpQuadTwist{R}, λ::ExpTilt{R}) where {R<:Real} = ExpQuadTwist(ψ.h - λ.h, ψ.eJ)
 
 struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
     Mλ::Sampleable{<:VariateForm,<:ValueSupport}
@@ -41,9 +55,15 @@ end
 
 function logmcmeantwist(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
 
-    x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
-    return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
-    # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
+    # THIS: has seems to have higher variance (apparent in high dimensions) since we are trying to minimise
+    # Mₚ₊₁(λₚ₊₁)(xₚ) which appears in the denominator of Mₚ₊₁^λ(rₚ₊₁)(xₚ)
+    # x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
+    # return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
+    # # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
+
+    x = rand(rng, untilt(twist.Mλ, twist.λ), Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
+    return logsumexp(twist.β .* twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
+    # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ)
 end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
@@ -71,7 +91,7 @@ end
 
 function (K::DecompTemperKernel{T})(d::AbstractMvNormal, ψ::T) where {R<:Real, T<:ExpQuadTwist{R}}
     # best partial analytical
-    b = (inv(ψ.J) + cov(d)) \ ((ψ.J \ ψ.h) - mean(d))
+    b = (inv(ψ.eJ) + cov(d)) \ ((inv(ψ.eJ) * ψ.h) - mean(d))
     λ = ExpTilt(b)
     r = ψ / λ
     Mλ = tilt(d, λ)
