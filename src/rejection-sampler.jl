@@ -6,15 +6,15 @@ function samplebyrejection!(rng::AbstractRNG, s::Sampleable, ψ::AbstractTwist, 
     # log scale:returns log ψ(x) 
     # 0 ≤ β ≤ 1
 
-    for _ in 1:maxiter
+    for i in 1:maxiter
         # x = rand(rng, s)
         rand!(rng, s, x) # doesn't work for static vector?
         if β * ψ(x, :log) > log(rand(rng))
-            return true # success
+            return i # success
         end
     end
 
-    return false
+    return 0
 
 end
 
@@ -31,8 +31,8 @@ RejectionSampler(d::Sampleable{V,S}, ψ::T; maxiter::Int64) where {V<:VariateFor
 # rand univariate case:
 function rand(rng::AbstractRNG, s::RejectionSampler{Univariate, S, T}) where {S<:ValueSupport, T<:AbstractTwist}
     x = (S <: Continuous) ? 0.0 : 0
-    success = samplebyrejection!(rng, s.d, s.ψ, s.β,  s.maxiter, x)
-    @assert success "Rejection sample failed to accept after $(s.maxiter) iterations."
+    iter = samplebyrejection!(rng, s.d, s.ψ, s.β,  s.maxiter, x)
+    @assert iter > 0 "Rejection sample failed to accept after $(s.maxiter) iterations."
     return x
 end
 
@@ -40,8 +40,8 @@ end
 Base.length(s::RejectionSampler{Multivariate, S, T}) where {S<:ValueSupport, T<:AbstractTwist} = length(s.d)
 
 function _rand!(rng::AbstractRNG, s::RejectionSampler{Multivariate, S, T}, x::AbstractVector{R}) where {S<:ValueSupport, T<:AbstractTwist, R<:Real}
-    success = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
-    @assert success "Rejection sample failed to accept after $(s.maxiter) iterations."
+    iter = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
+    @assert iter > 0 "Rejection sample failed to accept after $(s.maxiter) iterations."
     return x # to work with default Distributions.rand
 end
 
@@ -49,8 +49,14 @@ end
 Base.size(s::RejectionSampler{Multivariate, S, T}) where {S<:ValueSupport, T<:AbstractTwist} = size(s.d)
 
 function _rand!(rng::AbstractRNG, s::RejectionSampler{Multivariate, S, T}, x::DenseMatrix{R}) where {S<:ValueSupport, T<:AbstractTwist, R<:Real}
-    success = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
-    @assert success "Rejection sample failed to accept after $(s.maxiter) iterations."
+    iter = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
+    @assert iter > 0 "Rejection sample failed to accept after $(s.maxiter) iterations."
     return x # to work with default Distributions.rand
 end
 
+# override default for counting iterations of rejection
+function rand!(rng::AbstractRNG, s::RejectionSampler{Multivariate, S, T}, x::AbstractVector{R}) where {S<:ValueSupport, T<:AbstractTwist, R<:Real}
+    iter = samplebyrejection!(rng, s.d, s.ψ, s.β, s.maxiter, x)
+    @assert iter > 0 "Rejection sample failed to accept after $(s.maxiter) iterations."
+    return iter
+end

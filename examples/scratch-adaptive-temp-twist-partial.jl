@@ -1,3 +1,6 @@
+import StatsFuns: logsumexp
+import Roots: find_zero
+
 abstract type AbstractTemperKernel{T<:AbstractTwist} end
 
 mutable struct ExpTilt{R<:Real} <: AbstractTwist
@@ -80,6 +83,7 @@ mutable struct DecompTwistVectorParticle{d} <: AbstractParticle # TT = Tempered 
     x::SVector{d, Float64} # current: t
     twₚ₊₁::TwistDecomp{Float64} # next: t + 1
     logψ̃::Float64 # ψ̃ = Mₚ₊₁(ψₚ₊₁)(xₚ) / ψₚ(xₚ)
+    rsn::Int64 # number of rejection sampler
     DecompTwistVectorParticle{d}() where d = new()
 end
 
@@ -186,7 +190,7 @@ function (chain::DecompTwistedMarkovChain{D,K,T})(new::DecompTwistVectorParticle
     
     # mutate: x
     #scratch.xₚ = Array{eltype(Mψx)}(undef, size(Mψx))
-    rand!(rng, scratch.Mψx, scratch.xₚ)
+    new.rsn = rand!(rng, scratch.Mψx, scratch.xₚ)
     new.x = scratch.xₚ
 
     # mutate: next twist
