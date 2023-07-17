@@ -64,7 +64,7 @@ function logmcmeantwist(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
     # return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
     # # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
 
-    x = rand(rng, untilt(twist.Mλ, twist.λ), Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
+    x = rand(rng, untilt(twist.Mλ, twist.λ), Nₘ) # ~ Mₚ(xₚ₋₁, ⋅)
     return logsumexp(twist.β .* twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
     # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ)
 end
