@@ -31,22 +31,24 @@ function (λ::ExpTilt{R})(X::AbstractMatrix{R}, outscale::Symbol) where {R<:Real
 end
 
 
-
-tilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ + d.Σ*λ.h, d.Σ)
-untilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = MvNormal(d.μ - d.Σ*λ.h, d.Σ)
+Base.iszero(λ::ExpTilt{R}) where {R<:Real} = iszero(λ.h)
+tilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = iszero(λ) ? d : MvNormal(d.μ + d.Σ*λ.h, d.Σ)
+untilt(d::MvNormal, λ::ExpTilt{R}) where {R<:Real} = iszero(λ) ? d : MvNormal(d.μ - d.Σ*λ.h, d.Σ)
 
 Base.:/(ψ::ExpQuadTwist{R}, λ::ExpTilt{R}) where {R<:Real} = ExpQuadTwist(ψ.h - λ.h, ψ.eJ)
+
+Base.:*(β::R, λ::ExpTilt{R}) where {R<:Real} = ExpTilt(β * λ.h)
+
 
 struct TwistDecomp{R<:Real} <: AbstractTwist # particle stores this
     Mλ::Sampleable{<:VariateForm,<:ValueSupport}
     λ::ExpTilt{R}
     r::ExpQuadTwist{R}
-    β::Float64
     logZMλ::Float64
 end
 
 function (twist::TwistDecomp{R})(x::AbstractVector{R}, outscale::Symbol) where {R<:Real}
-    ℓval = twist.λ(x, :log) + twist.β * twist.r(x, :log)
+    ℓval = twist.λ(x, :log) + twist.r(x, :log)
     if outscale == :log
         return ℓval
     else
@@ -65,15 +67,14 @@ function logmcmeantwist(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
     # # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
 
     x = rand(rng, untilt(twist.Mλ, twist.λ), Nₘ) # ~ Mₚ(xₚ₋₁, ⋅)
-    return logsumexp(twist.β .* twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
+    return logsumexp(twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
     # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ)
 end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
-    Mλ::Sampleable{<:VariateForm,<:ValueSupport} # partial
-    λ::ExpTilt{<:Real}
-    r::T
-    logZMλ::Float64
+    M::Sampleable{<:VariateForm,<:ValueSupport} # partial
+    ψ::T
+    b::Function
     logα::Float64 # acceptance target
     Nₐ::Int64 # sample to estimate acceptance rate
 end
@@ -94,29 +95,31 @@ struct DecompTemperKernel{T<:AbstractTwist} <: AbstractTemperKernel{T}
 end
 
 function (K::DecompTemperKernel{T})(d::AbstractMvNormal, ψ::T) where {R<:Real, T<:ExpQuadTwist{R}}
-    # best partial analytical
-    b = (inv(ψ.eJ) + cov(d)) \ ((inv(ψ.eJ) * ψ.h) - mean(d))
-    λ = ExpTilt(b)
-    r = ψ / λ
-    Mλ = tilt(d, λ)
-    logZMλ = (b' * cov(d) * b)/2 + mean(d)' * b
-    return DecompTemperAdaptSampler(Mλ, λ, r, logZMλ, K.logα, K.Nₐ)
+    # best partial analytical function (conditional on tempering β)
+    b(β::Float64) = ((inv(ψ.eJ) ./ β) + cov(d)) \ ((inv(ψ.eJ) * ψ.h) - mean(d))
+
+    return DecompTemperAdaptSampler(d, ψ, b, K.logα, K.Nₐ)
 end
 
 function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}}) where {R<:Real}
         
-    # choose β from trial draws
-    logrx = s.r(rand(rng, s.Mλ, s.Nₐ), :log)
+    # choose β from trial draws (targets acceptance rate on ψ, not partial)
+    logψx = s.ψ(rand(rng, s.M, s.Nₐ), :log)
 
     # define reach_acc_rate(b) > 0 if accept target is exceeded
-    reach_acc_rate(b::Float64) = logsumexp(b .* logrx) - log(s.Nₐ) - s.logα
+    reach_acc_rate(b::Float64) = logsumexp(b .* logψx) - log(s.Nₐ) - s.logα
     if reach_acc_rate(1.0) > 0
         β = 1.0
     else
         β = find_zero(reach_acc_rate, (0,1))
     end
 
-    return TwistDecomp(s.Mλ, s.λ, s.r, β, s.logZMλ)
+    λ = ExpTilt(s.b(β))
+    Mλ = tilt(s.M, λ)
+    r = (β * s.ψ) / λ
+    logZMλ = (λ.h' * cov(d) * λ.h)/2 + mean(d)' * λ.h # logZMλ not in use
+
+    return TwistDecomp(Mλ, λ, r, logZMλ) 
 end
 
 
@@ -138,9 +141,9 @@ function Base.getindex(chain::DecompTwistedMarkovChain{D,K,T}, i::Integer; base:
     if !base
         # twisted M, base = false
         if i == 1
-            return (twₚ) -> RejectionSampler(twₚ.Mλ, twₚ.r, twₚ.β, MAXITER)
+            return (twₚ) -> RejectionSampler(twₚ.Mλ, twₚ.r, 1.0, MAXITER) # β = 1.0 since Mλ, r are pre-tempered
         elseif i <= length(chain)
-            return (old) -> RejectionSampler(old.twₚ₊₁.Mλ, old.twₚ₊₁.r, old.twₚ₊₁.β, MAXITER)
+            return (old) -> RejectionSampler(old.twₚ₊₁.Mλ, old.twₚ₊₁.r, 1.0, MAXITER)
         else
             @error "Index $i not defined for chain."
         end
@@ -230,6 +233,6 @@ end
 
 function (K::TemperKernel{T})(d::AbstractMvNormal, ψ::T) where {R<:Real, T<:ExpQuadTwist{R}}
     # no partial analytical
-    λ = ExpTilt{R}(length(d)) # zero tilt
-    return DecompTemperAdaptSampler(d, λ, ψ, 0.0, K.logα, K.Nₐ)
+    b(β::Float64) = zeros(length(d))
+    return DecompTemperAdaptSampler(d, ψ, b, K.logα, K.Nₐ)
 end

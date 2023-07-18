@@ -65,3 +65,6 @@ end
 
 EigenMvNormalCanon(ψ::ExpQuadTwist{R}) where {R<:Real} = EigenMvNormalCanon(ψ.eJ,ψ.h)
 ExpQuadTwist(emvn::EigenMvNormalCanon{R}) where {R<:Real} = ExpQuadTwist(emvn.h, emvn.J)
+
+# scale twist
+Base.:*(β::R, ψ::ExpQuadTwist{R}) where {R<:Real} = ExpQuadTwist(β * ψ.h, Eigen(β * ψ.eJ.values, ψ.eJ.vectors))
