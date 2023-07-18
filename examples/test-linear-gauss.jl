@@ -10,8 +10,8 @@ using PathTwister
 
 const MAXITER = 10^5
 
-N = 2^10
-Nmc = 2^3
+N = 2^11
+Nmc = 2
 κ = 0.5
 
 # Types: VectorParticle, LinearGaussMarkovKernel, MvNormalNoise
@@ -27,7 +27,7 @@ logZ(io::SMCIO) = io.logZhats[end]
 
 # setup problem
 n = 10
-d = 10
+d = 20
 μ = MvNormal(SMatrix{d,d}(1.0I))
 
 A = @SMatrix [0.42^(abs(i-j)+1) for i = 1:d, j = 1:d]
@@ -74,31 +74,146 @@ logZ(bsmcio) - truelogZ
 
 ## Twisted
 
-potentialψ = MCDecompTwistedLogPotentials(potential)
+struct LearnSettings
+    MCreps::Int64
+    cvstrategy::Int64
+    iter::Int64
+    α::Float64
+end
+
+struct RepSettings
+    reps::Int64
+    targetα::Float64
+    Nacc::Int64
+    Nmc::Int64
+end
+
+function smctwist!(basemod::SMCModel, baseio::SMCIO, twistio::SMCIO, twistG::MCDecompTwistedLogPotentials, repset::RepSettings, learn::LearnSettings)
+
+    compcost = 0.0
+
+    smc!(basemod, baseio)
+    compcost += baseio.N
+    
+    ψ = [ExpQuadTwist{Float64}(d) for _ in 1:n]
+    lassocvtwist!(ψ, baseio, basemod, learn.MCreps, cvstrategy = learn.cvstrategy, iter = learn.iter, netα = learn.α)
+
+    for i in 1:repset.reps
+        βkernel = DecompTemperKernel{eltype(ψ)}(log(repset.targetα), repset.Nacc)
+        twistchain = DecompTwistedMarkovChain(μ, M, βkernel, n, ψ, repset.Nmc)
+        twistmodel = SMCModel(twistchain, twistG, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(ψ)})
+        
+        smc!(twistmodel, twistio)
+        rjcost = mean(mean.([getfield.(particles, :rsn) for particles in twistio.allZetas]))
+        compcost += twistio.N * (rjcost + βkernel.Nₐ + twistchain.Nₘ)
+
+        if i < repset.reps
+            lassocvtwist!(ψ, twistio, twistmodel, learn.MCreps, cvstrategy = learn.cvstrategy, iter = learn.iter, netα = learn.α)
+        end
+    end
+
+    return compcost
+
+end
+
+learncv = LearnSettings(1, 8, 8, 1.0)
+repset = RepSettings(3, 0.005, 1, 1)
+tpotential = MCDecompTwistedLogPotentials(potential)
+tsmcio = SMCIO{DecompTwistVectorParticle{d}, DecompTwistedScratch{d, ExpQuadTwist{Float64}}}(N, n, 1, true, κ)
+smctwist!(bmodel, bsmcio, tsmcio, tpotential, repset, learncv)
+logZ(tsmcio) - truelogZ
+
+# try d = 3, long time series (paper examples)
+
+# bring tsmcmodel out, to run again smc!(...)
+# increase particles and decrease target acceptance rate
+# see what's taking so long (profile) - bad estimation of rejection part - long times
 
 ψ1 = [ExpQuadTwist{Float64}(d) for _ in 1:n]
-
 lassocvtwist!(ψ1, bsmcio, bmodel, 8, cvstrategy = 8, iter = 4, netα = 1.0)
 
-Mβ₀ = TemperKernel{eltype(ψ1)}(log(0.01), Nmc)
+Mβ₀ = TemperKernel{eltype(ψ1)}(log(0.25), Nmc)
 chainψ₀ = DecompTwistedMarkovChain(μ, M, Mβ₀, n, ψ1, Nmc)
-
 modelψ₀ = SMCModel(chainψ₀, potentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(ψ1)})
-
 smcioψ₀ = SMCIO{modelψ₀.particle, modelψ₀.pScratch}(N, n, 1, true, κ)
 
 smc!(modelψ₀, smcioψ₀)
-
 logZ(smcioψ₀) - truelogZ
+
+Mβ₁ = DecompTemperKernel{eltype(ψ1)}(log(0.5), Nmc)
+chainψ₁ = DecompTwistedMarkovChain(μ, M, Mβ₁, n, ψ1, Nmc)
+modelψ₁ = SMCModel(chainψ₁, potentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(ψ1)})
+
+smcioψ₁ = SMCIO{modelψ₁.particle, modelψ₁.pScratch}(N, n, 1, true, κ)
+smc!(modelψ₁, smcioψ₁)
+logZ(smcioψ₁) - truelogZ
+
+mean.([getfield.(particles, :rsn) for particles in smcioψ₁.allZetas])
+
+ψ2 = deepcopy(ψ1)
+lassocvtwist!(ψ2, smcioψ₁, modelψ₁, 8, cvstrategy = 8, iter = 4, netα = 1.0)
+
+Mβ₂ = DecompTemperKernel{eltype(ψ2)}(log(0.05), Nmc)
+chainψ₂ = DecompTwistedMarkovChain(μ, M, Mβ₂, n, ψ1, Nmc)
+modelψ₂ = SMCModel(chainψ₂, potentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(ψ2)})
+
+smcioψ₂ = SMCIO{modelψ₂.particle, modelψ₂.pScratch}(N, n, 1, true, κ)
+smc!(modelψ₂, smcioψ₂)
+logZ(smcioψ₂) - truelogZ
+
+mean.([getfield.(particles, :rsn) for particles in smcioψ₂.allZetas])
+
+
+ψ3 = deepcopy(ψ2)
+lassocvtwist!(ψ3, smcioψ₂, modelψ₂, 8, cvstrategy = 8, iter = 4, netα = 1.0)
+
+Mβ₃ = DecompTemperKernel{eltype(ψ2)}(log(0.001), Nmc)
+chainψ₃ = DecompTwistedMarkovChain(μ, M, Mβ₃, n, ψ1, Nmc)
+modelψ₃ = SMCModel(chainψ₃, potentialψ, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(ψ3)})
+
+smcioψ₃ = SMCIO{modelψ₃.particle, modelψ₃.pScratch}(N, n, 1, true, κ)
+smc!(modelψ₃, smcioψ₃)
+logZ(smcioψ₃) - truelogZ
+
+mean.([getfield.(particles, :rsn) for particles in smcioψ₃.allZetas])
 
 # comparison SMC
 
-rsiters = [getfield.(particles, :rsn) for particles in smcioψ₀.allZetas]
+rsiters = [getfield.(particles, :rsn) for particles in smcioψ₃.allZetas]
 multi = mean(mean.(rsiters))
 
 Neq = ceil(Int64, N * (multi + Nmc))
 
-bsmcio = SMCIO{bmodel.particle, bmodel.pScratch}(Neq, n, 1, true, κ)
+bsmcio = SMCIO{bmodel.particle, bmodel.pScratch}(40000, n, 1, true, κ)
 
-smc!(bmodel, bsmcio)
-logZ(bsmcio) - truelogZ
+baseZ = zeros(100)
+
+for i in 1:100
+    smc!(bmodel, bsmcio)
+    baseZ[i] = logZ(bsmcio) - truelogZ
+end
+
+ψZ = zeros(100)
+for i in 1:100
+    smc!(modelψ₀, smcioψ₀)
+    ψZ[i] = logZ(smcioψ₀) - truelogZ
+end
+
+ψZ₃ = zeros(100)
+for i in 1:100
+    smc!(modelψ₃, smcioψ₃)
+    ψZ₃[i] = logZ(smcioψ₃) - truelogZ
+end
+
+mean(ψZ₃)
+mean(ψZ)
+mean(baseZ)
+
+
+
+# Does the tempering of ψ affect the optimal tempering?
+# ψ = λ * (ψ / λ)ᵝ = ψᵝ * λ¹⁻ᵝ <--- bad?
+# ψ = λ * (ψᵝ / λ) = ψᵝ
+
+# Can we reduce variance of random weights by using
+# new λ just for MC estimate?
