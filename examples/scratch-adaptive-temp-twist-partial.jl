@@ -117,7 +117,7 @@ function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}
     λ = ExpTilt(s.b(β))
     Mλ = tilt(s.M, λ)
     r = (β * s.ψ) / λ
-    logZMλ = (λ.h' * cov(d) * λ.h)/2 + mean(d)' * λ.h # logZMλ not in use
+    logZMλ = (λ.h' * cov(s.M) * λ.h)/2 + mean(s.M)' * λ.h # logZMλ not in use
 
     return TwistDecomp(Mλ, λ, r, logZMλ) 
 end
