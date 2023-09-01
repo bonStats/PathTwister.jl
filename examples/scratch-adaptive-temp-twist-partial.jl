@@ -62,13 +62,15 @@ function logmcmeantwist(rng, twist::TwistDecomp{R}, Nₘ::Int64) where {R<:Real}
 
     # THIS: has seems to have higher variance (apparent in high dimensions) since we are trying to minimise
     # Mₚ₊₁(λₚ₊₁)(xₚ) which appears in the denominator of Mₚ₊₁^λ(rₚ₊₁)(xₚ)
-    # x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
-    # return twist.logZMλ + logsumexp(twist.β .* twist.r(x, :log)) - log(Nₘ)
+    x = rand(rng, twist.Mλ, Nₘ) # ~ Mₚ^λ(xₚ₋₁, ⋅)
+    r1 = twist.logZMλ + logsumexp(twist.r(x, :log)) - log(Nₘ)
     # # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ) = Mₚ₊₁(λₚ₊₁)(xₚ)Mₚ₊₁^λ(rₚ₊₁)(xₚ)
 
     x = rand(rng, untilt(twist.Mλ, twist.λ), Nₘ) # ~ Mₚ(xₚ₋₁, ⋅)
-    return logsumexp(twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
+    r2 = logsumexp(twist.r(x, :log) .+  twist.λ(x, :log)) - log(Nₘ)
     # estimate of Mₚ₊₁(ψₚ₊₁)(xₚ)
+
+    return logsumexp(r1, r2) - log(2)
 end
 
 struct DecompTemperAdaptSampler{T<:AbstractTwist} <: Sampleable{Univariate, Continuous}
@@ -117,7 +119,7 @@ function Base.rand(rng::AbstractRNG, s::DecompTemperAdaptSampler{ExpQuadTwist{R}
     λ = ExpTilt(s.b(β))
     Mλ = tilt(s.M, λ)
     r = (β * s.ψ) / λ
-    logZMλ = (λ.h' * cov(s.M) * λ.h)/2 + mean(s.M)' * λ.h # logZMλ not in use
+    logZMλ = (λ.h' * cov(s.M) * λ.h)/2 + mean(s.M)' * λ.h
 
     return TwistDecomp(Mλ, λ, r, logZMλ) 
 end
