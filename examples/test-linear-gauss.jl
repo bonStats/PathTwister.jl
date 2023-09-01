@@ -6,6 +6,7 @@ using Random
 import StatsBase: countmap
 using Kalman
 using GaussianDistributions
+import GaussianDistributions: ⊕
 using PathTwister
 
 const MAXITER = 10^5
@@ -27,7 +28,7 @@ logZ(io::SMCIO) = io.logZhats[end]
 
 # setup problem
 n = 10
-d = 20
+d = 10
 μ = MvNormal(SMatrix{d,d}(1.0I))
 
 A = @SMatrix [0.42^(abs(i-j)+1) for i = 1:d, j = 1:d]
@@ -48,6 +49,18 @@ for p in 2:n
     y[p] = latentx[p] + rand(noise)
 end
 
+function ⊗(x::Gaussian, y::Gaussian)
+    Σ⁻¹ = inv(x.Σ) + inv(y.Σ)
+    μ = Σ⁻¹ \ ((x.Σ \ x.μ) + (y.Σ \ y.μ))
+    Gaussian(μ, inv(Σ⁻¹))
+end
+
+function ⨸(x::Gaussian, y::Gaussian)
+    Σ⁻¹ = inv(x.Σ) - inv(y.Σ)
+    μ = Σ⁻¹ \ ((x.Σ \ x.μ) - (y.Σ \ y.μ))
+    Gaussian(μ, inv(Σ⁻¹))
+end
+
 ## Kalman Filter
 D = Matrix(Diagonal(ones((d,))))  
 
@@ -55,10 +68,21 @@ D = Matrix(Diagonal(ones((d,))))
 Kevo = LinearEvolution(A, Gaussian(b, Σ))
 
 # Define observation scheme
-Kobs = LinearObservation(Kevo, D, D)
+Obs = LinearObservationModel(D, D)
+Mkf = LinearStateSpaceModel(Kevo, Obs)
+
+Y = collect(t=>y[t] for t in 1:n)
+Mkf0 = Gaussian(zeros(d), Matrix(μ.Σ))
 
 # Filter
-_, truelogZ = kalmanfilter(Kobs, 1 => Gaussian(zeros(d), Matrix(μ.Σ)), 1:n .=> y)
+filtering, truelogZ = kalmanfilter(Mkf, 1 => Mkf0, Y)
+smoothing, _ = rts_smoother(Mkf, 1 => Mkf0, Y)
+
+Gpot = Gaussian.(y, [D])
+
+optimaltwist = (Gpot .⊗ smoothing.x) .⨸ filtering.x
+
+optψ = [ExpQuadTwist(g.Σ \ g.μ, inv(Matrix(g.Σ))) for g in optimaltwist]
 
 ## Base SMC
 
@@ -184,7 +208,7 @@ multi = mean(mean.(rsiters))
 
 Neq = ceil(Int64, N * (multi + Nmc))
 
-bsmcio = SMCIO{bmodel.particle, bmodel.pScratch}(40000, n, 1, true, κ)
+bsmcio = SMCIO{bmodel.particle, bmodel.pScratch}(N*4, n, 1, true, κ)
 
 baseZ = zeros(100)
 
@@ -217,3 +241,24 @@ mean(baseZ)
 
 # Can we reduce variance of random weights by using
 # new λ just for MC estimate?
+
+
+
+N = 2^12
+potentialψopt = MCDecompTwistedLogPotentials(potential)
+Mβopt = TemperKernel{eltype(optψ)}(log(0.02), 1)
+chainψopt = DecompTwistedMarkovChain(μ, M, Mβopt, n, optψ, 1)
+modelψopt = SMCModel(chainψopt, potentialψopt, n, DecompTwistVectorParticle{d}, DecompTwistedScratch{d, eltype(optψ)})
+smcioψopt = SMCIO{modelψopt.particle, modelψopt.pScratch}(N, n, 1, true, κ)
+
+smc!(modelψopt, smcioψopt)
+logZ(smcioψopt) - truelogZ
+
+rjcost = mean(mean.([getfield.(particles, :rsn) for particles in smcioψopt.allZetas]))
+
+Neq = ceil(Int64, N*(rjcost+3))
+
+bsmcio = SMCIO{bmodel.particle, bmodel.pScratch}(Neq, n, 1, true, κ)
+
+smc!(bmodel, bsmcio)
+logZ(bsmcio) - truelogZ
